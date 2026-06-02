@@ -1,0 +1,36 @@
+[package]
+name = "oxihttp-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "OxiHTTP core types: error and http crate re-exports."
+keywords = ["http", "types", "error", "pure-rust"]
+categories = ["web-programming", "network-programming"]
+
+[dependencies]
+http              = { workspace = true }
+http-body         = { workspace = true }
+http-body-util    = { workspace = true }
+bytes             = { workspace = true }
+thiserror         = { workspace = true }
+percent-encoding  = { workspace = true }
+pin-project-lite  = { workspace = true }
+futures-core      = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+oxitls-core       = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio             = { workspace = true, features = ["rt", "macros"] }
+proptest          = { workspace = true }
+criterion         = { workspace = true }
+
+[features]
+tls = ["dep:oxitls-core"]
+
+[[bench]]
+name = "core_bench"
+harness = false

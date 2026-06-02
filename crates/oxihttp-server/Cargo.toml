@@ -1,0 +1,68 @@
+[package]
+name = "oxihttp-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "OxiHTTP HTTP server implementation."
+keywords = ["http", "server", "pure-rust", "async"]
+categories = ["web-programming::http-server", "network-programming", "asynchronous"]
+
+[dependencies]
+oxihttp-core   = { workspace = true }
+http           = { workspace = true }
+http-body-util = { workspace = true }
+bytes          = { workspace = true }
+hyper          = { workspace = true }
+hyper-util     = { workspace = true }
+tokio          = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+# Server feature optional deps
+oxiarc-deflate   = { workspace = true, optional = true }
+futures-util     = { workspace = true, optional = true }
+sha2             = { workspace = true, optional = true }
+mime_guess       = { workspace = true, optional = true }
+# TLS optional deps
+oxitls           = { workspace = true, optional = true }
+tokio-rustls     = { workspace = true, optional = true }
+rustls           = { workspace = true, optional = true }
+rustls-pki-types = { workspace = true, optional = true }
+rustls-pemfile   = { workspace = true, optional = true }
+# TCP socket tuning (M7 Block C)
+socket2        = { workspace = true }
+# Tower integration optional deps
+tower          = { workspace = true, optional = true }
+tower-service  = { workspace = true, optional = true }
+tower-layer    = { workspace = true, optional = true }
+# WebSocket optional deps
+sha1           = { workspace = true, optional = true }
+base64         = { workspace = true, optional = true }
+# HTTP/3 support (optional)
+oxiquic-h3     = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion      = { workspace = true }
+tokio          = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
+hyper          = { workspace = true, features = ["http1", "client"] }
+http-body-util = { workspace = true }
+
+[[bench]]
+name = "server_bench"
+harness = false
+
+[[bench]]
+name = "server_memory"
+harness = false
+
+[features]
+default = []
+compression  = ["dep:oxiarc-deflate", "dep:futures-util"]
+static-files = ["dep:sha2", "dep:mime_guess"]
+sse          = ["dep:futures-util"]
+tls          = ["dep:oxitls", "dep:tokio-rustls", "dep:rustls", "dep:rustls-pki-types", "dep:rustls-pemfile"]
+tower        = ["dep:tower", "dep:tower-service", "dep:tower-layer"]
+websocket    = ["dep:sha1", "dep:base64"]
+h3           = ["dep:oxiquic-h3", "dep:rustls"]

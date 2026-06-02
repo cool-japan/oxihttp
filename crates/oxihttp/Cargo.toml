@@ -1,0 +1,92 @@
+[package]
+name = "oxihttp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "OxiHTTP Pure-Rust HTTP facade for the COOLJAPAN ecosystem."
+keywords = ["http", "client", "server", "pure-rust", "async"]
+categories = ["web-programming", "network-programming", "asynchronous"]
+
+[features]
+default = ["client", "server"]
+client              = ["dep:oxihttp-client"]
+server              = ["dep:oxihttp-server"]
+tls                 = ["client", "oxihttp-client/tls", "oxihttp-server?/tls"]
+compression         = ["server", "oxihttp-server/compression"]
+decompression       = ["client", "oxihttp-client/decompression"]
+static-files        = ["server", "oxihttp-server/static-files"]
+sse                 = ["server", "oxihttp-server/sse"]
+tower               = ["server", "oxihttp-server/tower"]
+websocket           = ["server", "oxihttp-server/websocket"]
+socks               = ["client", "oxihttp-client/socks"]
+h3                  = ["client", "server", "oxihttp-client/h3", "oxihttp-server/h3"]
+all                 = ["client", "server", "tls", "compression", "decompression", "static-files", "sse", "tower", "websocket", "socks", "h3"]
+
+[dependencies]
+oxihttp-core   = { workspace = true }
+oxihttp-client = { workspace = true, optional = true }
+oxihttp-server = { workspace = true, optional = true }
+http           = { workspace = true }
+
+[dev-dependencies]
+tokio          = { workspace = true }
+hyper          = { workspace = true }
+hyper-util     = { workspace = true }
+bytes          = { workspace = true }
+http-body-util = { workspace = true }
+serde_json     = { workspace = true }
+oxihttp-client = { workspace = true, features = ["socks"] }
+oxihttp-server = { workspace = true, features = ["tls", "tower", "websocket"] }
+tower-layer    = { workspace = true }
+tower-service  = { workspace = true }
+oxihttp-core   = { workspace = true }
+# TLS test helpers (M2)
+oxitls           = { workspace = true, features = ["rcgen"] }
+tokio-rustls     = { workspace = true }
+rustls           = { workspace = true }
+rustls-pki-types = { workspace = true }
+rustls-pemfile   = { workspace = true }
+# Compression test helpers (M3)
+oxiarc-deflate   = { workspace = true }
+# Streaming test helpers
+futures-util     = { workspace = true }
+# Proxy test helpers
+base64           = { workspace = true }
+# Fuzz/property testing (M9 Block D)
+proptest         = { workspace = true }
+# Benchmark infrastructure (M6 Block A)
+criterion        = { workspace = true }
+# HTTP/3 test helpers
+oxiquic-h3       = { workspace = true }
+oxiquic-crypto   = { workspace = true }
+
+[[bench]]
+name = "client_latency"
+harness = false
+
+[[bench]]
+name = "client_body"
+harness = false
+
+[[bench]]
+name = "server_dispatch"
+harness = false
+
+[[bench]]
+name = "server_files"
+harness = false
+
+[[bench]]
+name = "websocket_bench"
+harness = false
+
+[[bench]]
+name = "memory_bench"
+harness = false
+
+[[bench]]
+name = "facade_bench"
+harness = false

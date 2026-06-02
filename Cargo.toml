@@ -1,0 +1,64 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/oxihttp-core",
+    "crates/oxihttp-client",
+    "crates/oxihttp-server",
+    "crates/oxihttp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+authors = ["COOLJAPAN OU (Team Kitasan)"]
+license = "Apache-2.0"
+repository = "https://github.com/cool-japan/oxihttp"
+description = "OxiHTTP is the COOLJAPAN Pure-Rust HTTP stack (reqwest/hyper-free facade)."
+
+[workspace.dependencies]
+oxihttp-core   = { path = "crates/oxihttp-core",   version = "0.1.0" }
+oxihttp-client = { path = "crates/oxihttp-client", version = "0.1.0" }
+oxihttp-server = { path = "crates/oxihttp-server", version = "0.1.0" }
+# external — re-read from crates.io 2026-05-25
+http            = { version = "1.4" }
+http-body       = { version = "1.0" }
+bytes           = { version = "1.11" }
+http-body-util  = { version = "0.1" }
+hyper           = { version = "1.10", features = ["client", "http1", "server", "http2"] }
+hyper-util      = { version = "0.1", features = ["client", "client-legacy", "http1", "http2", "tokio", "server", "server-auto"] }
+tokio           = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "sync", "time"] }
+tower           = { version = "0.5", features = ["util"] }
+tower-service   = { version = "0.3" }
+tower-layer     = { version = "0.3" }
+tower-http      = { version = "0.6" }
+thiserror       = { version = "2.0" }
+serde           = { version = "1.0", features = ["derive"] }
+serde_json      = { version = "1.0" }
+percent-encoding = { version = "2.3" }
+pin-project-lite = { version = "0.2" }
+futures-core    = { version = "0.3" }
+# New in this pass — TLS (M2)
+oxitls           = { version = "0.1.0", default-features = false, features = ["pure", "webpki-roots"] }
+oxitls-core      = { version = "0.1.0" }
+tokio-rustls     = { version = "0.26", default-features = false, features = ["tls12"] }
+rustls           = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls-pki-types = { version = "1" }
+rustls-pemfile   = { version = "2" }
+# New in this pass — server features (M3 completion)
+oxiarc-deflate   = { version = "0.3.2" }
+futures-util     = { version = "0.3", default-features = false, features = ["alloc", "async-await"] }
+sha2             = { version = "0.11", default-features = false }
+mime_guess       = { version = "2", default-features = false }
+# WebSocket support (M4 Block D)
+sha1             = { version = "0.11", default-features = true }
+base64           = { version = "0.22", default-features = false, features = ["alloc"] }
+# Benchmark infrastructure (M6 Block A)
+criterion        = { version = "0.8", features = ["async_tokio"] }
+# TCP socket tuning (M7 Block C)
+socket2          = { version = "0.6", features = ["all"] }
+# HTTP/3 via oxiquic
+oxiquic-h3       = { version = "0.1.0", default-features = false, features = ["h3-compat"] }
+oxiquic-crypto   = { version = "0.1.0" }
+# Testing
+proptest         = { version = "1" }
