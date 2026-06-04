@@ -137,7 +137,7 @@ OxiHTTP equivalents.
 
 ## Status
 
-**v0.1.0** — production-ready for HTTP/1.1, HTTPS, and HTTP/2 workloads.
+**v0.1.1** — production-ready for HTTP/1.1, HTTPS, and HTTP/2 workloads.
 All milestones M0–M5 complete (349 tests, 0 failures).
 
 | Milestone | Status |

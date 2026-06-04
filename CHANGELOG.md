@@ -5,6 +5,15 @@ All notable changes to OxiHTTP are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-06-04
+
+### Changed
+
+- Version bumped to 0.1.1 across all workspace crates (`oxihttp-core`, `oxihttp-client`, `oxihttp-server`, `oxihttp`) and workspace `Cargo.toml`
+- README and TODO updated to reflect v0.1.1 release date (2026-06-04)
+
+[0.1.1]: https://github.com/cool-japan/oxihttp/releases/tag/v0.1.1
+
 ## [0.1.0] — 2026-06-01
 
 Initial public release of the COOLJAPAN Pure-Rust HTTP stack.

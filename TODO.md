@@ -2,7 +2,7 @@
 
 ## Status
 
-**v0.1.0 released 2026-06-01** — Pure-Rust HTTP stack at ~16 000 SLOC across 4 subcrates (78 source files).
+**v0.1.1 released 2026-06-04** — Pure-Rust HTTP stack at ~16 000 SLOC across 4 subcrates (78 source files).
 M0–M5 complete. 349 tests, 0 failures. All milestones shipped.
 
 Pre-publication note: `oxitls` and `oxiquic` workspaces must be published to crates.io first

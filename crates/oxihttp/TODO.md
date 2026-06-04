@@ -15,7 +15,7 @@ and reqwest migration guide are deferred.
 - [x] Add `Server` re-export from oxihttp-server with sensible defaults (~20 SLOC)
 - [x] Add `tls` module re-exporting oxitls types needed for custom TLS config (~30 SLOC)
 - [x] Add `middleware` module re-exporting common tower-http layers (Timeout, CORS, Compression, Logging) (~40 SLOC)
-- [ ] Add `h3` module behind `h3` feature gate for HTTP/3 client and server via oxiquic (~30 SLOC)
+- [x] Add `h3` module behind `h3` feature gate for HTTP/3 client and server via oxiquic (~30 SLOC)
 - [x] Add `ws` module re-exporting WebSocket types from oxihttp-server (~20 SLOC)
 - [x] Add default feature flags documentation in lib.rs doc comments (~40 SLOC doc)
 - [x] Add migration guide from reqwest: doc module `pub mod migrate_from_reqwest` with API comparison (~200 SLOC doc)
@@ -41,15 +41,15 @@ and reqwest migration guide are deferred.
 - [x] Compile test: `cargo build --all-features` produces no errors
 
 ## Performance
-- [ ] Benchmark: facade `get()` overhead vs direct client usage
-- [ ] Benchmark: default client construction time (includes TLS + connection pool init)
+- [x] Benchmark: facade `get()` overhead vs direct client usage
+- [x] Benchmark: default client construction time (includes TLS + connection pool init)
 
 ## Integration
 - [x] Wire oxitls as default TLS provider for the facade client
 - [x] Wire oxitls webpki roots as default trust store
 - [x] Wire oxihttp-client as `client` feature dependency
 - [x] Wire oxihttp-server as `server` feature dependency
-- [ ] Wire oxiquic-h3 as `h3` feature dependency (HTTP/3 support)
-- [ ] Coordinate feature flags: `client`, `server`, `tls`, `h2`, `h3`, `ws`, `middleware`
+- [x] Wire oxiquic-h3 as `h3` feature dependency (HTTP/3 support)
+- [x] Coordinate feature flags: `client`, `server`, `tls`, `h2`, `h3`, `ws`, `middleware`
 - [x] Ensure `cargo tree` shows no ring/aws-lc-rs/openssl in default feature closure
 - [x] Add deny.toml verification in CI for banned crate enforcement
