@@ -5,6 +5,50 @@ All notable changes to OxiHTTP are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-06-19
+
+### Added
+
+- `ClientBuilder::danger_accept_invalid_certs(bool)` — boolean-parameter alias for
+  `with_danger_accept_invalid_certs()`, mirroring the reqwest API style (`tls` feature,
+  `oxihttp-client`).
+- `ClientBuilder::with_custom_cert_verifier(Arc<dyn ServerCertVerifier>)` — inject an
+  arbitrary `rustls::client::danger::ServerCertVerifier` into the TLS stack, enabling
+  certificate pinning, custom CA hierarchies, and bespoke verification logic without
+  forking the library (`tls` feature, `oxihttp-client`).
+- `tls::DangerousNoVerification` — a `ServerCertVerifier` implementation that accepts any
+  certificate unconditionally (intended for tests / isolated local environments only).
+  Re-exported as `oxihttp::DangerousNoVerification` (`tls` feature).
+- `tls::build_tls_connector_with_verifier` — internal `TlsConnector` builder that bypasses
+  the `oxitls::ClientBuilder` to wire a caller-supplied verifier directly into a
+  `rustls::ClientConfig` (`tls` feature, `oxihttp-client`).
+- `Response::header(name: &str) -> Option<&str>` — ergonomic single-header accessor
+  returning the first UTF-8 value for the named header, or `None` if absent or non-UTF-8
+  (`oxihttp-client`).
+- `oxihttp-client::tls` module is now `pub` (was `pub(crate)`), making `DangerousNoVerification`
+  and related types directly accessible without going through the facade.
+
+### Changed
+
+- `ClientBuilder` internal TLS connector construction refactored into `build_tls_connector_inner()`;
+  all `build_*` variants (proxy, SOCKS5, HTTPS, resolver) now dispatch through this helper,
+  ensuring consistent behaviour when a custom verifier is present (`tls` feature).
+- `TlsRebuildConfig` gains `custom_cert_verifier` field so per-request TLS override
+  (`with_request_tls_config`) correctly preserves a custom verifier across re-connections.
+- `TlsRebuildConfig`'s `Debug` impl is now manual (was `#[derive(Debug)]`) to avoid
+  requiring `ServerCertVerifier: Debug`; the custom verifier field prints as
+  `<dyn ServerCertVerifier>` (`tls` feature, `oxihttp-client`).
+- Workspace crate versions bumped to 0.1.4 (`oxihttp-core`, `oxihttp-client`,
+  `oxihttp-server`, `oxihttp`).
+
+### Security
+
+- `DangerousNoVerification` and `danger_accept_invalid_certs(true)` are clearly documented
+  as PRODUCTION-UNSAFE; their doc-comments carry explicit `WARNING` notices and
+  recommend TLS-verified alternatives. No production default behaviour has changed.
+
+[0.1.4]: https://github.com/cool-japan/oxihttp/releases/tag/v0.1.4
+
 ## [0.1.2] - 2026-06-10
 
 ### Changed

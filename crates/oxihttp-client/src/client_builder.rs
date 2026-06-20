@@ -134,6 +134,11 @@ pub struct ClientBuilder {
     /// Enable TLS 1.3 0-RTT early data (HTTP fast-open) for subsequent requests.
     #[cfg(feature = "tls")]
     pub(super) early_data: bool,
+    /// Optional custom server-certificate verifier.  When `Some`, takes
+    /// precedence over `accept_invalid_certs` and all trust-store settings.
+    #[cfg(feature = "tls")]
+    pub(super) custom_cert_verifier:
+        Option<std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier>>,
 }
 
 impl ClientBuilder {
@@ -168,6 +173,8 @@ impl ClientBuilder {
             key_log_path: None,
             #[cfg(feature = "tls")]
             early_data: false,
+            #[cfg(feature = "tls")]
+            custom_cert_verifier: None,
         }
     }
 
@@ -458,14 +465,7 @@ impl ClientBuilder {
             }
         };
 
-        let tls_connector = tls::build_tls_connector(
-            &self.trusted_certs_der,
-            &self.alpn,
-            self.accept_invalid_certs,
-            self.use_webpki_roots,
-            self.key_log_path.clone(),
-            self.early_data,
-        )?;
+        let tls_connector = self.build_tls_connector_inner()?;
 
         let http_connector = ProxyConnector::new(proxy_uri, self.connect_timeout);
         let https_connector = OxiHttpsConnector::new(http_connector, tls_connector);
@@ -525,14 +525,7 @@ impl ClientBuilder {
             }
         };
 
-        let tls_connector = tls::build_tls_connector(
-            &self.trusted_certs_der,
-            &self.alpn,
-            self.accept_invalid_certs,
-            self.use_webpki_roots,
-            self.key_log_path.clone(),
-            self.early_data,
-        )?;
+        let tls_connector = self.build_tls_connector_inner()?;
 
         let socks_connector = Socks5Connector::new(proxy_uri, self.connect_timeout);
         let https_connector = OxiHttpsConnector::new(socks_connector, tls_connector);
@@ -639,6 +632,106 @@ impl ClientBuilder {
         self
     }
 
+    /// **DANGER**: Enable or disable certificate verification via a boolean flag.
+    ///
+    /// This is an alias for [`with_danger_accept_invalid_certs`](Self::with_danger_accept_invalid_certs)
+    /// that accepts an explicit `bool` parameter, matching the API style of
+    /// reqwest's `danger_accept_invalid_certs`.
+    ///
+    /// # Security
+    ///
+    /// Passing `true` disables **all** TLS certificate verification, making HTTPS
+    /// connections trivially vulnerable to man-in-the-middle attacks.  Only use
+    /// in tests or isolated local environments.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # fn example() -> Result<(), oxihttp_core::OxiHttpError> {
+    /// use oxihttp_client::Client;
+    ///
+    /// // Mirror reqwest's API: danger_accept_invalid_certs(true)
+    /// let client = Client::builder()
+    ///     .danger_accept_invalid_certs(true)
+    ///     .build_https()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "tls")]
+    pub fn danger_accept_invalid_certs(mut self, accept: bool) -> Self {
+        self.accept_invalid_certs = accept;
+        self
+    }
+
+    /// Inject a custom server-certificate verifier.
+    ///
+    /// The supplied `verifier` replaces the default trust-store verification
+    /// for all TLS connections made by the built client.  When a custom verifier
+    /// is present it takes precedence over:
+    /// - `with_trusted_cert_der` / `with_webpki_roots`
+    /// - `danger_accept_invalid_certs` / `with_danger_accept_invalid_certs`
+    ///
+    /// This enables certificate pinning, custom CA hierarchies, or completely
+    /// bespoke verification logic without forking the library.
+    ///
+    /// # Security
+    ///
+    /// The security of the resulting client depends entirely on the supplied
+    /// verifier.  Injecting a verifier that accepts any certificate (e.g.
+    /// [`crate::tls::DangerousNoVerification`]) disables authentication;
+    /// see that type's documentation for details.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # fn example() -> Result<(), oxihttp_core::OxiHttpError> {
+    /// use std::sync::Arc;
+    /// use oxihttp_client::{Client, tls::DangerousNoVerification};
+    ///
+    /// // Inject the "accept-everything" verifier (for tests only).
+    /// let provider = oxitls::pure_provider();
+    /// let verifier = Arc::new(DangerousNoVerification::new(provider));
+    ///
+    /// let client = Client::builder()
+    ///     .with_custom_cert_verifier(verifier)
+    ///     .build_https()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "tls")]
+    pub fn with_custom_cert_verifier(
+        mut self,
+        verifier: std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier>,
+    ) -> Self {
+        self.custom_cert_verifier = Some(verifier);
+        self
+    }
+
+    // --- internal TLS connector helper (feature-gated) ----------------------
+
+    /// Choose the appropriate TLS connector builder depending on whether a
+    /// custom verifier has been injected.  This keeps the dispatch in one place
+    /// so all `build_*` variants stay consistent.
+    #[cfg(feature = "tls")]
+    fn build_tls_connector_inner(&self) -> Result<tokio_rustls::TlsConnector, OxiHttpError> {
+        if let Some(ref verifier) = self.custom_cert_verifier {
+            tls::build_tls_connector_with_verifier(
+                std::sync::Arc::clone(verifier),
+                &self.alpn,
+                self.early_data,
+            )
+        } else {
+            tls::build_tls_connector(
+                &self.trusted_certs_der,
+                &self.alpn,
+                self.accept_invalid_certs,
+                self.use_webpki_roots,
+                self.key_log_path.clone(),
+                self.early_data,
+            )
+        }
+    }
+
     // --- build() — plain HTTP -----------------------------------------------
 
     /// Build a plain HTTP `Client` (no TLS).
@@ -699,14 +792,7 @@ impl ClientBuilder {
     /// The resulting client handles both `http://` and `https://` URIs.
     #[cfg(feature = "tls")]
     pub fn build_https(self) -> Result<super::HttpsClient, OxiHttpError> {
-        let connector = tls::build_tls_connector(
-            &self.trusted_certs_der,
-            &self.alpn,
-            self.accept_invalid_certs,
-            self.use_webpki_roots,
-            self.key_log_path.clone(),
-            self.early_data,
-        )?;
+        let connector = self.build_tls_connector_inner()?;
 
         let mut http = HttpConnector::new();
         // Allow the inner connector to accept https:// URIs so that the
@@ -759,6 +845,7 @@ impl ClientBuilder {
             http2_settings: self.http2_settings.clone(),
             pool_max_idle_per_host: self.pool_max_idle_per_host,
             pool_idle_timeout: self.pool_idle_timeout,
+            custom_cert_verifier: self.custom_cert_verifier,
         });
 
         Ok(Client {
@@ -835,20 +922,16 @@ impl ClientBuilder {
     /// The resulting client handles both `http://` and `https://` URIs.
     #[cfg(feature = "tls")]
     pub fn build_https_with_resolver(self) -> Result<super::ResolverHttpsClient, OxiHttpError> {
+        // Build the TLS connector first (while `self` is still whole), then
+        // extract the resolver field.  Reversing the order would cause a
+        // partial-move conflict because `ok_or_else` consumes `self.resolver`.
+        let tls_connector = self.build_tls_connector_inner()?;
+
         let resolver = self.resolver.ok_or_else(|| {
             OxiHttpError::Dns(
                 "with_resolver must be called before build_https_with_resolver".into(),
             )
         })?;
-
-        let tls_connector = tls::build_tls_connector(
-            &self.trusted_certs_der,
-            &self.alpn,
-            self.accept_invalid_certs,
-            self.use_webpki_roots,
-            self.key_log_path.clone(),
-            self.early_data,
-        )?;
 
         let mut http = HttpConnector::new_with_resolver(BoxResolver(resolver));
         http.enforce_http(false);

@@ -30,7 +30,7 @@ pub mod connector;
 #[cfg(feature = "tls")]
 pub mod request_config;
 #[cfg(feature = "tls")]
-pub(crate) mod tls;
+pub mod tls;
 
 #[cfg(feature = "h3")]
 pub mod h3;
@@ -39,6 +39,8 @@ pub mod h3;
 pub use connector::{MaybeHttpsStream, OxiHttpsConnector};
 #[cfg(feature = "tls")]
 pub use request_config::RequestTlsConfig;
+#[cfg(feature = "tls")]
+pub use tls::DangerousNoVerification;
 
 #[cfg(feature = "socks")]
 pub use proxy::Socks5Connector;
@@ -119,6 +121,30 @@ impl Response {
     /// Response headers.
     pub fn headers(&self) -> &HeaderMap {
         self.inner.headers()
+    }
+
+    /// Return the first value of the named response header as a UTF-8 string,
+    /// or `None` if the header is absent or its value is not valid UTF-8.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # async fn example() -> Result<(), oxihttp_core::OxiHttpError> {
+    /// use oxihttp_client::Client;
+    ///
+    /// let client = Client::builder().build()?;
+    /// let resp = client.get("http://example.com/new-resource")?.send().await?;
+    /// if let Some(location) = resp.header("location") {
+    ///     println!("redirected to: {location}");
+    /// }
+    /// if let Some(nonce) = resp.header("replay-nonce") {
+    ///     println!("ACME nonce: {nonce}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.inner.headers().get(name).and_then(|v| v.to_str().ok())
     }
 
     /// HTTP version used for this response.
@@ -671,7 +697,7 @@ fn resolve_redirect_uri(base: &Uri, location: &str) -> Result<Uri, OxiHttpError>
 // TlsRebuildConfig — stores all TLS + pool params needed to re-create an
 // HttpsClient with modified trust settings (used by with_request_tls_config).
 #[cfg(feature = "tls")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct TlsRebuildConfig {
     pub trusted_certs_der: Vec<Vec<u8>>,
     pub alpn: Vec<String>,
@@ -685,6 +711,33 @@ pub(crate) struct TlsRebuildConfig {
     pub http2_settings: Option<Http2Settings>,
     pub pool_max_idle_per_host: Option<usize>,
     pub pool_idle_timeout: Option<Duration>,
+    /// Optional custom certificate verifier injected via
+    /// [`ClientBuilder::with_custom_cert_verifier`].  When `Some`, this verifier
+    /// takes precedence over all other trust-store settings.
+    pub custom_cert_verifier: Option<Arc<dyn rustls::client::danger::ServerCertVerifier>>,
+}
+
+#[cfg(feature = "tls")]
+impl std::fmt::Debug for TlsRebuildConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsRebuildConfig")
+            .field("trusted_certs_der_count", &self.trusted_certs_der.len())
+            .field("alpn", &self.alpn)
+            .field("accept_invalid_certs", &self.accept_invalid_certs)
+            .field("use_webpki_roots", &self.use_webpki_roots)
+            .field("early_data", &self.early_data)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("tcp_nodelay", &self.tcp_nodelay)
+            .field("tcp_keepalive", &self.tcp_keepalive)
+            .field(
+                "custom_cert_verifier",
+                &self
+                    .custom_cert_verifier
+                    .as_ref()
+                    .map(|_| "<dyn ServerCertVerifier>"),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -811,14 +864,24 @@ impl Client<OxiHttpsConnector<HttpConnector>> {
         };
         let accept_invalid = base.accept_invalid_certs || override_cfg.accept_invalid_certs;
 
-        let new_tls = tls::build_tls_connector(
-            effective_certs,
-            &base.alpn,
-            accept_invalid,
-            base.use_webpki_roots,
-            base.key_log_path.clone(),
-            base.early_data,
-        )?;
+        // If a custom verifier is installed on the base config, use the
+        // verifier-path builder so the custom verifier is preserved.
+        let new_tls = if let Some(ref verifier) = base.custom_cert_verifier {
+            tls::build_tls_connector_with_verifier(
+                Arc::clone(verifier),
+                &base.alpn,
+                base.early_data,
+            )?
+        } else {
+            tls::build_tls_connector(
+                effective_certs,
+                &base.alpn,
+                accept_invalid,
+                base.use_webpki_roots,
+                base.key_log_path.clone(),
+                base.early_data,
+            )?
+        };
 
         let mut http = HttpConnector::new();
         http.enforce_http(false);
@@ -860,6 +923,7 @@ impl Client<OxiHttpsConnector<HttpConnector>> {
             http2_settings: base.http2_settings.clone(),
             pool_max_idle_per_host: base.pool_max_idle_per_host,
             pool_idle_timeout: base.pool_idle_timeout,
+            custom_cert_verifier: base.custom_cert_verifier.clone(),
         });
 
         Ok(Client {

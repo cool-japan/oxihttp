@@ -94,7 +94,8 @@ pub use oxihttp_client::{
 
 #[cfg(feature = "tls")]
 pub use oxihttp_client::{
-    request_config::RequestTlsConfig, HttpsClient, MaybeHttpsStream, OxiHttpsConnector,
+    request_config::RequestTlsConfig, tls::DangerousNoVerification, HttpsClient, MaybeHttpsStream,
+    OxiHttpsConnector,
 };
 
 /// One-shot GET request using a default client.
