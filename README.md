@@ -137,8 +137,9 @@ OxiHTTP equivalents.
 
 ## Status
 
-**v0.1.3** — production-ready for HTTP/1.1, HTTPS, and HTTP/2 workloads.
-All milestones M0–M5 complete (349 tests, 0 failures). Released 2026-06-10.
+**v0.2.0** — production-ready for HTTP/1.1, HTTPS, and HTTP/2 workloads.
+All milestones M0–M5 complete (355 tests, 0 failures). Released 2026-06-22.
+Security: clears L1 PENDING-REPUBLISH — oxitls 0.2.0 uses pure Mozilla root store exclusively.
 
 | Milestone | Status |
 |-----------|--------|

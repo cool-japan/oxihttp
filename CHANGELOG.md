@@ -5,6 +5,26 @@ All notable changes to OxiHTTP are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-06-22
+
+### Changed
+
+- Updated `oxitls` dependency to `^0.2.0` (was `^0.1.3`); `oxitls-core` likewise updated to
+  `^0.2.0`. This tracks the oxitls 0.2.0 release which restricts `webpki-roots` to the
+  pure Mozilla-curated root store, removing the previous conditional native-cert path.
+- Workspace crate versions bumped to 0.2.0 (`oxihttp-core`, `oxihttp-client`,
+  `oxihttp-server`, `oxihttp`).
+
+### Security
+
+- **Clears L1 PENDING-REPUBLISH**: The prior `oxitls ^0.1.3` dependency carried a known
+  L1 violation — `oxitls-webpki-roots` could fall back to native OS certificate stores,
+  leaking system-CA trust into what should be a pure Mozilla-roots bundle. `oxitls 0.2.0`
+  fixes this at the source: the `webpki-roots` feature now unconditionally uses only the
+  Mozilla root set embedded in the crate. No API changes in oxihttp itself.
+
+[0.2.0]: https://github.com/cool-japan/oxihttp/releases/tag/v0.2.0
+
 ## [0.1.4] - 2026-06-19
 
 ### Added

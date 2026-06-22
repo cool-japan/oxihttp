@@ -2,10 +2,8 @@
 
 ## Status
 
-**v0.1.3 released 2026-06-11** — Pure-Rust HTTP stack at ~16 000 SLOC across 4 subcrates (78 source files).
-M0–M5 complete. 349 tests, 0 failures. All milestones shipped.
-
-**v0.1.4 (next)** — development in progress.
+**v0.2.0 released 2026-06-22** — Pure-Rust HTTP stack at ~16 000 SLOC across 4 subcrates (78 source files).
+M0–M5 complete. 355 tests, 0 failures. All milestones shipped. Security: clears L1 PENDING-REPUBLISH (oxitls 0.2.0 pure Mozilla root store).
 
 Pre-publication note: `oxitls` and `oxiquic` workspaces must be published to crates.io first
 (oxihttp-core depends on oxitls-core and oxiquic-h3 as optional deps; cargo requires all
