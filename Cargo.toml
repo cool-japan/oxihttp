@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 # Covers the DEFAULT feature set only (client + server, no tls/h3/
 # compression/decompression). Some optional features pull in sibling
@@ -27,9 +27,9 @@ repository = "https://github.com/cool-japan/oxihttp"
 description = "OxiHTTP is the COOLJAPAN Pure-Rust HTTP stack — a reqwest-compatible facade over hyper."
 
 [workspace.dependencies]
-oxihttp-core   = { path = "crates/oxihttp-core",   version = "0.2.1" }
-oxihttp-client = { path = "crates/oxihttp-client", version = "0.2.1" }
-oxihttp-server = { path = "crates/oxihttp-server", version = "0.2.1" }
+oxihttp-core   = { path = "crates/oxihttp-core",   version = "0.2.2" }
+oxihttp-client = { path = "crates/oxihttp-client", version = "0.2.2" }
+oxihttp-server = { path = "crates/oxihttp-server", version = "0.2.2" }
 # external — re-read from crates.io 2026-05-25
 http            = { version = "1.4" }
 http-body       = { version = "1.0" }

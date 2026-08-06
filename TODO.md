@@ -2,17 +2,13 @@
 
 ## Status
 
-**v0.2.1 (unreleased)** — Pure-Rust HTTP stack at ~19 100 SLOC across 4 subcrates (85 `.rs`
+**v0.2.1 released (2026-08-07)** — Pure-Rust HTTP stack at ~19 100 SLOC across 4 subcrates (85 `.rs`
 files incl. tests/examples/benches; 40 under `src/`; via `tokei`, 2026-08-04).
 M0–M5 complete. 320 tests with default features, 446 with `--all-features` (plus 56
 doctests), 0 failures (`cargo nextest run` / `cargo test --doc`, 2026-08-07). All
 milestones shipped. Security: clears L1 PENDING-REPUBLISH (oxitls 0.2.0 pure Mozilla root
 store); `oxitls` further bumped to 0.3.0 in this release (clears RUSTSEC-2026-0104, see
 CHANGELOG.md).
-
-Pre-publication note: `oxitls` and `oxiquic` workspaces must be published to crates.io first
-(oxihttp-core depends on oxitls-core and oxiquic-h3 as optional deps; cargo requires all
-deps — including optional — to be available on crates.io before packaging).
 
 Next release candidates:
 - Performance tuning: H/2 SETTINGS_MAX_CONCURRENT_STREAMS — **partially resolved**: `h2`
