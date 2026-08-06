@@ -105,6 +105,9 @@ pub struct ClientBuilder {
     pub(super) default_headers: HeaderMap,
     pub(super) user_agent: Option<String>,
     pub(super) decompression: bool,
+    /// Maximum response body size in bytes (see
+    /// [`crate::DEFAULT_MAX_RESPONSE_BODY`]).
+    pub(super) max_response_body: usize,
     /// Middleware interceptors applied to every request/response.
     pub(super) middleware: Vec<Arc<dyn ClientMiddleware>>,
     /// Optional proxy configuration.
@@ -154,6 +157,7 @@ impl ClientBuilder {
             default_headers: HeaderMap::new(),
             user_agent: None,
             decompression: false,
+            max_response_body: crate::DEFAULT_MAX_RESPONSE_BODY,
             middleware: Vec::new(),
             proxy: None,
             cookie_jar: None,
@@ -234,6 +238,26 @@ impl ClientBuilder {
     /// feature).
     pub fn with_decompression(mut self, enabled: bool) -> Self {
         self.decompression = enabled;
+        self
+    }
+
+    /// Set the maximum response body size the client will buffer, in bytes.
+    ///
+    /// Applies to both the raw (wire) body collected by `body_bytes()` /
+    /// `body_text()` / `body_json()` and — when [`with_decompression`] is
+    /// enabled — to the *decompressed* output. Protects against a
+    /// malicious or compromised server sending an oversized response, or a
+    /// small compressed response that expands into a "decompression bomb".
+    /// Exceeding the limit returns a typed `OxiHttpError::Body` rather than
+    /// growing memory without bound.
+    ///
+    /// Defaults to [`crate::DEFAULT_MAX_RESPONSE_BODY`] (64 MiB). Can be
+    /// overridden per-request with
+    /// [`RequestBuilder::max_response_body`](crate::RequestBuilder::max_response_body).
+    ///
+    /// [`with_decompression`]: Self::with_decompression
+    pub fn with_max_response_body(mut self, max_bytes: usize) -> Self {
+        self.max_response_body = max_bytes;
         self
     }
 
@@ -383,6 +407,7 @@ impl ClientBuilder {
             connect_timeout: self.connect_timeout,
             read_timeout: self.read_timeout,
             decompression: self.decompression,
+            max_response_body: self.max_response_body,
             middleware: self.middleware,
             cookie_jar: self.cookie_jar.clone(),
             #[cfg(feature = "tls")]
@@ -434,6 +459,7 @@ impl ClientBuilder {
             connect_timeout: self.connect_timeout,
             read_timeout: self.read_timeout,
             decompression: self.decompression,
+            max_response_body: self.max_response_body,
             middleware: self.middleware,
             cookie_jar: self.cookie_jar.clone(),
             #[cfg(feature = "tls")]
@@ -495,6 +521,7 @@ impl ClientBuilder {
             connect_timeout: self.connect_timeout,
             read_timeout: self.read_timeout,
             decompression: self.decompression,
+            max_response_body: self.max_response_body,
             middleware: self.middleware,
             cookie_jar: self.cookie_jar.clone(),
             #[cfg(feature = "tls")]
@@ -555,6 +582,7 @@ impl ClientBuilder {
             connect_timeout: self.connect_timeout,
             read_timeout: self.read_timeout,
             decompression: self.decompression,
+            max_response_body: self.max_response_body,
             middleware: self.middleware,
             cookie_jar: self.cookie_jar.clone(),
             #[cfg(feature = "tls")]
@@ -778,6 +806,7 @@ impl ClientBuilder {
             connect_timeout: self.connect_timeout,
             read_timeout: self.read_timeout,
             decompression: self.decompression,
+            max_response_body: self.max_response_body,
             middleware: self.middleware,
             cookie_jar: self.cookie_jar.clone(),
             #[cfg(feature = "tls")]
@@ -856,6 +885,7 @@ impl ClientBuilder {
             connect_timeout: self.connect_timeout,
             read_timeout: self.read_timeout,
             decompression: self.decompression,
+            max_response_body: self.max_response_body,
             middleware: self.middleware,
             cookie_jar: self.cookie_jar.clone(),
             tls_rebuild: Some(tls_rebuild),
@@ -909,6 +939,7 @@ impl ClientBuilder {
             retry_policy: self.retry_policy,
             default_headers,
             decompression: self.decompression,
+            max_response_body: self.max_response_body,
             middleware: self.middleware,
             cookie_jar: self.cookie_jar,
             #[cfg(feature = "tls")]
@@ -973,6 +1004,7 @@ impl ClientBuilder {
             retry_policy: self.retry_policy,
             default_headers,
             decompression: self.decompression,
+            max_response_body: self.max_response_body,
             middleware: self.middleware,
             cookie_jar: self.cookie_jar,
             #[cfg(feature = "tls")]
@@ -997,6 +1029,7 @@ impl std::fmt::Debug for ClientBuilder {
             .field("redirect_policy", &self.redirect_policy)
             .field("retry_policy", &self.retry_policy)
             .field("decompression", &self.decompression)
+            .field("max_response_body", &self.max_response_body)
             .field("user_agent", &self.user_agent)
             .field("tcp_nodelay", &self.tcp_nodelay)
             .field("tcp_keepalive", &self.tcp_keepalive)

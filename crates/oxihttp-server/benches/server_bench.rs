@@ -9,7 +9,9 @@
 //!   6. `ws_throughput`        — WebSocket echo message throughput (gated on `websocket`)
 //!   7. `connection_accept`    — TCP connection-to-first-byte latency
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+#[cfg(any(feature = "static-files", feature = "websocket"))]
+use criterion::Throughput;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use http::Method;
 use std::hint::black_box;
 use std::time::Duration;

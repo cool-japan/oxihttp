@@ -1,0 +1,28 @@
+# Global Clippy configuration for OxiHTTP.
+#
+# msrv matches the DEFAULT feature set's `rust-version` in the workspace
+# Cargo.toml (Cargo.toml:11), so clippy's MSRV-aware lints (e.g.
+# `manual_c_str_literals`, `manual_div_ceil`) don't suggest APIs unavailable
+# on the floor toolchain. Optional features `tls` and `compression`/
+# `decompression` pull in sibling COOLJAPAN crates with a higher declared
+# floor of their own (1.89 / 1.85 respectively, as published to crates.io);
+# `h3` matches this default floor — see the MSRV table in README.md. This
+# value intentionally stays at the default-feature floor rather than the
+# highest optional-feature floor: raising it would make clippy suggest APIs
+# that a default-feature build (no tls/compression/decompression) cannot
+# actually use.
+msrv = "1.80"
+
+too-many-arguments-threshold = 30
+
+disallowed-methods = []
+disallowed-types = []
+
+# Tests routinely assert against known-good fixtures and use `.unwrap()`/
+# `.expect()` for setup that must succeed (temp dirs, listener binds, request
+# builders) where a failure is a test bug, not a runtime concern. Production
+# code stays on the no-unwrap/no-expect policy (enforced by review and by
+# `cargo clippy --all-targets -- -D warnings` treating any accidental
+# escape into non-test code as a normal lint hit, not a suppressed one).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

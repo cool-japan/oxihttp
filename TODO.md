@@ -2,17 +2,48 @@
 
 ## Status
 
-**v0.2.0 released 2026-06-22** — Pure-Rust HTTP stack at ~16 000 SLOC across 4 subcrates (78 source files).
-M0–M5 complete. 355 tests, 0 failures. All milestones shipped. Security: clears L1 PENDING-REPUBLISH (oxitls 0.2.0 pure Mozilla root store).
+**v0.2.1 (unreleased)** — Pure-Rust HTTP stack at ~19 100 SLOC across 4 subcrates (85 `.rs`
+files incl. tests/examples/benches; 40 under `src/`; via `tokei`, 2026-08-04).
+M0–M5 complete. 320 tests with default features, 446 with `--all-features` (plus 56
+doctests), 0 failures (`cargo nextest run` / `cargo test --doc`, 2026-08-07). All
+milestones shipped. Security: clears L1 PENDING-REPUBLISH (oxitls 0.2.0 pure Mozilla root
+store); `oxitls` further bumped to 0.3.0 in this release (clears RUSTSEC-2026-0104, see
+CHANGELOG.md).
 
 Pre-publication note: `oxitls` and `oxiquic` workspaces must be published to crates.io first
 (oxihttp-core depends on oxitls-core and oxiquic-h3 as optional deps; cargo requires all
 deps — including optional — to be available on crates.io before packaging).
 
 Next release candidates:
-- Performance tuning: H/2 SETTINGS_MAX_CONCURRENT_STREAMS auto-detection
-- Client-side cookie jar (persistent across redirects)
-- Multipart form body streaming (zero-copy for large file uploads)
+- Performance tuning: H/2 SETTINGS_MAX_CONCURRENT_STREAMS — **partially resolved**: `h2`
+  already honors the peer's advertised limit automatically (stream initiation backpressures
+  on `poll_ready` until a slot is free — see `h2::client::SendRequest::max_concurrent_send_streams`
+  docs), so nothing needs to be *implemented* for adaptation to happen. What remains is purely
+  *observability*: the value cannot currently be read back by an oxihttp caller because
+  `oxihttp-client::Client` is built on `hyper_util::client::legacy::Client`, whose connection
+  pool owns the per-connection `hyper::client::conn::http2::SendRequest` privately and does not
+  expose it. Surfacing the value (e.g. a `Client::http2_max_concurrent_streams(&self, uri)`
+  metrics accessor) requires bypassing that pooled client and managing HTTP/2 connections
+  directly — a larger architectural change, tracked separately rather than folded into this
+  bullet.
+- Client-side cookie jar (persistent across redirects) — **done**: `ClientBuilder::with_cookie_jar`
+  / `with_new_cookie_jar` inject cookies from the jar per-target-URL on every hop of a redirect
+  chain and persist `Set-Cookie` responses back into the jar after each hop
+  (`oxihttp-client/src/lib.rs`, inside the redirect-following loop).
+- Multipart form body streaming (zero-copy for large file uploads) — **done**:
+  `MultipartBuilder::add_stream_part` / `add_file_stream` transition to
+  `StreamingMultipart::build_stream`, which streams each part (including a caller-supplied
+  async byte stream for the file part) without materializing the full body in memory
+  (`oxihttp-core/src/multipart.rs`). `oxihttp-client`'s `RequestBuilder::multipart_stream()`
+  now accepts a `StreamingMultipart` directly and drives it against the wire (via
+  `Client`'s `hyper_util` client, generalized from a fixed `Full<Bytes>` to
+  `oxihttp_core::PinnedBody`) without buffering — bounded-memory streaming verified end to
+  end against the crate's own server in
+  `crates/oxihttp/tests/multipart_test.rs::test_multipart_stream_client_wire_bounded_memory`.
+  Trade-off (documented on `multipart_stream`, not a silent gap): the underlying stream is
+  one-shot, so a `multipart_stream` request always sends exactly once (bypasses
+  `RetryPolicy`) and cannot follow a body-preserving 307/308 redirect (typed
+  `OxiHttpError::Body` instead).
 - HTTP/3 server-side push (pending oxiquic-h3 API)
 
 ## Core Implementation
@@ -253,3 +284,19 @@ Next release candidates:
   - **Tests:** crates/oxihttp/tests/tower_test.rs (6 tests: 4 client + 2 server)
 - [x] M5: Proxy (HTTP CONNECT + SOCKS5) + server ergonomics + core primitives + facade polish (planned 2026-05-25)
   - HTTP/3 available via `h3` feature flag (done 2026-05-30)
+
+
+---
+
+<!-- production-readiness-backlog 2026-07-16 -->
+## Production-Readiness Backlog — 2026-07-16
+
+_Consolidated from static audit + Opus adversarial bug-hunt (48 verified defects across noffi) + baseline nextest/clippy + design investigation. See `../NOFFI_PRODUCTION_BACKLOG.md` for the full cross-project list and severity/model legend. All four items below shipped in commit `050c754` ("bump oxitls"), an ancestor of the current `0.2.1` branch HEAD — see CHANGELOG.md's `[0.2.1]` entry for the user-facing summary._
+
+**Confirmed bugs — Opus-verified:**
+- [x] **S · high** `oxihttp-client/src/lib.rs:590` — redirect loop re-sends Authorization/Cookie to redirect target across different host/scheme without stripping → credential leak. R2/N0 — **fixed** (commit `050c754`): `same_origin()` gates Authorization/Cookie retention on scheme+host match; regression tests `redirect_cross_host_strips_credentials`, `redirect_cross_scheme_strips_credentials`, `same_origin_is_case_insensitive` in `oxihttp-client/src/lib.rs`.
+- [x] **S · high** `oxihttp-server/src/ws.rs:146` — WebSocket reassembly accumulates fragments into `frag_buf` with no total-size cap → unbounded memory DoS. R2/N0 — **fixed** (commit `050c754`): `WebSocket::set_max_message_size` + `check_reassembly_size` guard; a subsequent pass additionally closed the single-unfragmented-frame variant of the same gap (`MIN_FRAME_PAYLOAD_CAP` / `check_size_limit` in `oxihttp-server/src/ws.rs`, see CHANGELOG).
+- [x] **S · med** `oxihttp-server/src/middleware.rs:164` — BodyLimit only checks Content-Length; `Transfer-Encoding: chunked` bypasses → downstream buffers whole body uncapped. R2/N0 — **fixed** (commit `050c754`): `MiddlewarePipeline::inject_body_limit` + `Request::body_bytes`'s `collect_body_limited` enforce the cap on decoded (not just declared) size.
+
+**Designed / audit:**
+- [x] **B/med · W1** doctests/examples expansion + h1 parser fuzz + document BoxError bounds policy. — **fixed** (commit `050c754`): `crates/oxihttp/examples/{client_requests,server_router}.rs`, BoxError policy documented in `oxihttp-core/src/error.rs`, proptest fuzz harnesses in `crates/oxihttp/tests/{server_fuzz_test,client_fuzz_test,client_response_fuzz_test}.rs`. Coverage-guided (`cargo-fuzz`) targets for the same parsers were added separately — see `fuzz/` and CHANGELOG.md.

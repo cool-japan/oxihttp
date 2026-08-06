@@ -1,10 +1,73 @@
 //! Error types for the OxiHTTP stack.
+//!
+//! # `BoxError` bounds policy
+//!
+//! [`OxiHttpError`] is the *only* error type that crosses a public OxiHTTP
+//! API boundary — every fallible `pub fn` in `oxihttp-core`, `oxihttp-client`,
+//! and `oxihttp-server` returns `Result<_, OxiHttpError>`. Callers should
+//! never need to downcast a `Box<dyn Error>` to find out what went wrong.
+//!
+//! That said, `Box<dyn std::error::Error + Send + Sync>` (informally
+//! `BoxError` in this codebase) does appear in a handful of internal
+//! signatures, strictly at the seams where OxiHTTP has to interoperate with
+//! external traits that are not ours to redefine:
+//!
+//! - `oxihttp_client::resolver::BoxResolver`'s `tower_service::Service<Name>`
+//!   implementation — `hyper-util`'s connector plumbing (the `Resolve` bound
+//!   used by `HttpConnector::with_resolver`) requires a `Service` whose
+//!   `Error` type is convertible to `Box<dyn Error + Send + Sync>`. There is
+//!   no way to plug a custom [`OxiHttpError`]-typed resolver into
+//!   `hyper-util` without going through this bound.
+//! - `oxihttp_client::connector::OxiHttpsConnector`'s generic `H: Service<Uri>`
+//!   bound (`H::Error: Into<Box<dyn Error + Send + Sync>>`) — the same
+//!   `hyper-util` `Connect` convention, needed so `OxiHttpsConnector` can wrap
+//!   *any* inner connector (plain TCP, a proxy tunnel, a test double, …)
+//!   supplied by a caller, not just types this crate controls.
+//!
+//! In both cases the boxed error is a strictly **internal, transient**
+//! representation: it is immediately mapped into a typed [`OxiHttpError`]
+//! variant (typically [`OxiHttpError::Hyper`] or [`OxiHttpError::Dns`]) before
+//! the value leaves the function that produced it, and it never appears in
+//! any type signature reachable from `oxihttp::Client` or `oxihttp::Server`.
+//! Server-side tower integration (`oxihttp_server::tower_compat`,
+//! `tower_middleware`) does not need this escape hatch at all — every
+//! `tower_service::Service` implemented there uses `OxiHttpError` directly as
+//! `Service::Error`, since the router itself defines that trait's
+//! implementation rather than adapting someone else's.
+//!
+//! Rule of thumb when adding new code: if you are implementing a foreign
+//! trait (`tower_service::Service`, `hyper_util`'s `Connect`/`Resolve`, …)
+//! whose `Error` associated type is bounded by `Into<Box<dyn Error + Send +
+//! Sync>>`, it is fine to satisfy that bound locally — but convert to
+//! [`OxiHttpError`] at the first opportunity and never let the boxed form
+//! escape into a `pub fn` return type.
 
 use std::sync::Arc;
 
 use thiserror::Error;
 
 /// Top-level error type for the OxiHTTP stack.
+///
+/// Every fallible public function across `oxihttp-core`, `oxihttp-client`,
+/// and `oxihttp-server` returns `Result<_, OxiHttpError>`. See the module
+/// documentation above for the policy on `Box<dyn Error>` at internal
+/// interop boundaries.
+///
+/// # Example
+///
+/// ```rust
+/// use oxihttp_core::OxiHttpError;
+/// use http::StatusCode;
+///
+/// let err = OxiHttpError::RouteNotFound {
+///     method: "GET".to_string(),
+///     path: "/missing".to_string(),
+/// };
+///
+/// assert_eq!(err.status_code(), Some(StatusCode::NOT_FOUND));
+/// assert!(err.to_string().contains("route not found"));
+/// assert!(!err.is_timeout());
+/// ```
 #[derive(Debug, Clone, Error)]
 pub enum OxiHttpError {
     /// An invalid URI was provided.

@@ -93,6 +93,24 @@ impl fmt::Display for ContentType {
 impl FromStr for ContentType {
     type Err = OxiHttpError;
 
+    /// Parse a `Content-Type` header value.
+    ///
+    /// This never returns `Err`: unrecognised MIME types are preserved as
+    /// [`ContentType::Other`] so callers can still inspect the raw value.
+    /// The `Result` return type exists to satisfy the [`FromStr`] contract
+    /// and to leave room for stricter validation in the future.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use oxihttp_core::ContentType;
+    ///
+    /// let ct: ContentType = "text/plain; charset=utf-8".parse().expect("infallible");
+    /// assert_eq!(ct, ContentType::Text(Some("utf-8".to_string())));
+    ///
+    /// let unknown: ContentType = "application/vnd.custom+json".parse().expect("infallible");
+    /// assert_eq!(unknown, ContentType::Other("application/vnd.custom+json".to_string()));
+    /// ```
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Parse "type/subtype; param=value" format
         // MIME type is case-insensitive, but parameter values preserve case.
@@ -149,6 +167,18 @@ pub struct AcceptEntry {
 
 /// Parse an `Accept` header value into a list of entries sorted by quality
 /// (highest first).
+///
+/// # Example
+///
+/// ```rust
+/// use oxihttp_core::content_type::parse_accept;
+///
+/// let entries = parse_accept("text/html, application/json;q=0.9, */*;q=0.1");
+/// assert_eq!(entries.len(), 3);
+/// // Highest quality (implicit 1.0) sorts first.
+/// assert_eq!(entries[0].content_type.mime_type(), "text/html");
+/// assert!((entries[1].quality - 0.9).abs() < f32::EPSILON);
+/// ```
 pub fn parse_accept(header: &str) -> Vec<AcceptEntry> {
     let mut entries: Vec<AcceptEntry> = header
         .split(',')
@@ -293,5 +323,59 @@ mod tests {
         let supported = vec![ContentType::Json];
         let result = negotiate_content_type("*/*", &supported);
         assert_eq!(result, Some(ContentType::Json));
+    }
+
+    // -------------------------------------------------------------------------
+    // Adversarial fuzz: header parsers must never panic on untrusted input
+    // -------------------------------------------------------------------------
+    //
+    // `ContentType::from_str` parses the `Content-Type` request/response
+    // header and `parse_accept` parses the `Accept` request header — both are
+    // fed directly with attacker-controlled bytes over the wire. Neither may
+    // panic; `ContentType::from_str` must resolve to `Ok`/`Err` and
+    // `parse_accept` must always return (possibly empty) without panicking.
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 512,
+            max_shrink_iters: 32,
+            ..ProptestConfig::default()
+        })]
+
+        /// Any arbitrary UTF-8 string fed as a `Content-Type` value must not panic.
+        #[test]
+        fn fuzz_content_type_from_str_never_panics(header in ".*") {
+            let _ = ContentType::from_str(&header);
+        }
+
+        /// Any arbitrary UTF-8 string fed as an `Accept` header must not panic,
+        /// and `negotiate_content_type` built on top of it must not panic either.
+        #[test]
+        fn fuzz_parse_accept_never_panics(header in ".*") {
+            let entries = parse_accept(&header);
+            let supported = [ContentType::Json, ContentType::Html(None), ContentType::Xml];
+            let _ = negotiate_content_type(&header, &supported);
+            // Every parsed entry must carry a finite, well-formed quality value
+            // (the parser must never smuggle NaN/garbage through from `f32::parse`).
+            for entry in &entries {
+                prop_assert!(entry.quality.is_finite());
+            }
+        }
+
+        /// Structured adversarial input: semicolon/quote-delimited fragments,
+        /// which exercise the `;`-splitting and `charset=`/`boundary=`
+        /// parameter-extraction branches far more often than free-form text.
+        #[test]
+        fn fuzz_content_type_from_str_never_panics_structured(
+            parts in prop::collection::vec(
+                prop::string::string_regex("[a-zA-Z0-9/;= \"-]{0,16}").expect("valid regex"),
+                0..8,
+            )
+        ) {
+            let header = parts.join(";");
+            let _ = ContentType::from_str(&header);
+        }
     }
 }

@@ -59,6 +59,10 @@ impl Iterator for BoxResolverAddrs {
     }
 }
 
+// `hyper-util`'s connector plumbing requires a `Service<Name>` whose `Error`
+// converts to `Box<dyn Error + Send + Sync>`; see the "BoxError bounds
+// policy" section in `oxihttp_core::error` for why this is scoped to this
+// one adapter and never returned from a public OxiHTTP API.
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 impl Service<Name> for BoxResolver {

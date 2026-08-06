@@ -35,8 +35,27 @@ use sha1::{Digest, Sha1};
 
 use crate::ws_frame::{read_frame, write_frame, Opcode};
 
+/// The frame-level payload cap ([`ws_frame::read_frame`]'s `max_payload_len`)
+/// is never allowed below this floor, regardless of how small
+/// [`WebSocket::set_max_message_size`] is configured.
+///
+/// Control frames (Ping/Pong/Close) are legal up to 125 bytes per RFC 6455
+/// §5.5 and are not subject to `max_message_size` at all (they are never
+/// reassembled or accumulated); flooring the frame-level cap at 125 keeps
+/// them deliverable even when an operator sets a very small message-size
+/// budget to bound *data* frames.
+const MIN_FRAME_PAYLOAD_CAP: u64 = 125;
+
 /// RFC 6455 §1.3 GUID appended to the client key for the accept handshake.
 const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-5AF986DFEC23";
+
+/// Default cap on the total reassembled size of a fragmented message (16 MiB).
+///
+/// A malicious peer can send an unbounded stream of continuation frames with
+/// FIN unset; without a ceiling the accumulated buffer would grow until the
+/// process is killed. Callers can adjust the limit via
+/// [`WebSocket::set_max_message_size`].
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Message
@@ -84,6 +103,8 @@ pub struct WebSocket<S> {
     closed: bool,
     /// True after a Close frame was sent by *us* (prevents double-send in recv).
     close_sent: bool,
+    /// Maximum total size (in bytes) of a reassembled fragmented message.
+    max_message_size: usize,
 }
 
 impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> WebSocket<S> {
@@ -95,7 +116,18 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> WebSocket<S> {
             frag_opcode: None,
             closed: false,
             close_sent: false,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
+    }
+
+    /// Set the maximum total size (in bytes) of a reassembled fragmented
+    /// message. Once the accumulated payload of an in-progress fragmented
+    /// message would exceed this limit, [`recv`](Self::recv) fails with
+    /// [`OxiHttpError::Body`] instead of buffering without bound.
+    ///
+    /// Defaults to 16 MiB.
+    pub fn set_max_message_size(&mut self, max_bytes: usize) {
+        self.max_message_size = max_bytes;
     }
 
     /// Receive the next complete message.
@@ -104,21 +136,50 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> WebSocket<S> {
     ///   then returned to the caller as `Message::Ping`.
     /// - Fragmented messages are reassembled before returning.
     /// - Returns `Ok(None)` when the connection has been closed.
+    ///
+    /// # Frame- and message-size limits
+    ///
+    /// Every frame read from the peer — fragmented or not — is bounded by
+    /// [`max_message_size`](Self::set_max_message_size): a single
+    /// unfragmented data frame larger than the configured limit is rejected
+    /// exactly like an over-budget reassembled (fragmented) message, so
+    /// `set_max_message_size` genuinely bounds per-connection memory rather
+    /// than only the fragmented-message path. Control frames (Ping/Pong/
+    /// Close, capped at 125 bytes by RFC 6455 §5.5 regardless) are never
+    /// subject to this limit.
     pub async fn recv(&mut self) -> Result<Option<Message>, OxiHttpError> {
         if self.closed {
             return Ok(None);
         }
         loop {
-            let frame = read_frame(&mut self.stream).await?;
+            // The wire-level frame cap floors at `MIN_FRAME_PAYLOAD_CAP` so a
+            // very small `max_message_size` cannot make legal (≤125-byte)
+            // control frames unreadable; *data* frames are still bounded
+            // precisely to `max_message_size` below via `check_size_limit`.
+            let frame_cap = (self.max_message_size as u64).max(MIN_FRAME_PAYLOAD_CAP);
+            let frame = match read_frame(&mut self.stream, frame_cap).await {
+                Ok(frame) => frame,
+                Err(e) => {
+                    // Any wire-level parse/protocol failure (including the
+                    // RFC 6455 §5.1 unmasked-frame rejection and the
+                    // per-frame size cap above) ends the connection — do not
+                    // let the caller keep pulling frames from a peer that
+                    // just violated the protocol.
+                    self.closed = true;
+                    return Err(e);
+                }
+            };
             match (frame.opcode, frame.fin) {
                 // ── Control frames (must not be fragmented, RFC §5.5) ──────────
                 (Opcode::Ping, _) => {
-                    // Auto-reply with Pong (RFC §5.5.3).
-                    write_frame(&mut self.stream, Opcode::Pong, &frame.payload, true).await?;
-                    return Ok(Some(Message::Ping(frame.payload.to_vec())));
+                    // Auto-reply with Pong (RFC §5.5.3). Move (not copy) the
+                    // payload into the reply and the returned message.
+                    let payload = frame.payload;
+                    write_frame(&mut self.stream, Opcode::Pong, &payload, true).await?;
+                    return Ok(Some(Message::Ping(payload)));
                 }
                 (Opcode::Pong, _) => {
-                    return Ok(Some(Message::Pong(frame.payload.to_vec())));
+                    return Ok(Some(Message::Pong(frame.payload)));
                 }
                 (Opcode::Close, _) => {
                     // Echo the Close back only if we haven't sent one ourselves.
@@ -132,17 +193,24 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> WebSocket<S> {
 
                 // ── Unfragmented data frame ────────────────────────────────────
                 (opcode @ (Opcode::Text | Opcode::Binary), true) if self.frag_buf.is_empty() => {
-                    return Ok(Some(make_data_message(opcode, frame.payload.to_vec())?));
+                    // Bound a single unfragmented frame by the same budget as
+                    // a reassembled fragmented message (see doc comment
+                    // above) — this is the fix for the "single 64 MiB frame
+                    // bypasses set_max_message_size" gap.
+                    self.check_size_limit(frame.payload.len())?;
+                    return Ok(Some(make_data_message(opcode, frame.payload)?));
                 }
 
                 // ── First fragment of a fragmented message ─────────────────────
                 (opcode @ (Opcode::Text | Opcode::Binary), false) if self.frag_buf.is_empty() => {
+                    self.check_size_limit(frame.payload.len())?;
                     self.frag_opcode = Some(opcode);
                     self.frag_buf.extend_from_slice(&frame.payload);
                 }
 
                 // ── Continuation frame ─────────────────────────────────────────
                 (Opcode::Continuation, fin) => {
+                    self.check_size_limit(frame.payload.len())?;
                     self.frag_buf.extend_from_slice(&frame.payload);
                     if fin {
                         let opcode = self.frag_opcode.take().ok_or_else(|| {
@@ -163,6 +231,28 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> WebSocket<S> {
                 }
             }
         }
+    }
+
+    /// Ensure that appending `incoming` bytes to the current message (either
+    /// the in-progress reassembly buffer, or — for a single unfragmented
+    /// frame — a message of exactly `incoming` bytes) would not exceed
+    /// [`max_message_size`](Self::set_max_message_size).
+    ///
+    /// On overflow the connection is marked closed (so no further frames are
+    /// read) and an [`OxiHttpError::Body`] is returned. This bounds the memory
+    /// a single message — fragmented or not — can consume.
+    fn check_size_limit(&mut self, incoming: usize) -> Result<(), OxiHttpError> {
+        let total = self.frag_buf.len().saturating_add(incoming);
+        if total > self.max_message_size {
+            self.closed = true;
+            self.frag_buf = Vec::new();
+            self.frag_opcode = None;
+            return Err(OxiHttpError::Body(format!(
+                "WebSocket: message exceeds maximum of {} bytes",
+                self.max_message_size
+            )));
+        }
+        Ok(())
     }
 
     /// Send a WebSocket message.
@@ -358,4 +448,263 @@ fn parse_close_frame(payload: &[u8]) -> Option<CloseFrame> {
     let code = u16::from_be_bytes([payload[0], payload[1]]);
     let reason = String::from_utf8_lossy(&payload[2..]).into_owned();
     Some(CloseFrame { code, reason })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ws_frame::write_frame_masked;
+    use tokio::io::AsyncWriteExt;
+
+    /// A fragmented message whose total reassembled size exceeds the configured
+    /// maximum must be rejected rather than buffered without bound.
+    #[tokio::test]
+    async fn oversized_reassembly_is_rejected() {
+        // Duplex pipe: we write client frames into `client`, the WebSocket
+        // reads from `server`.
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut ws = WebSocket::new(server);
+        // Small cap so the test stays fast and deterministic.
+        ws.set_max_message_size(1024);
+
+        // Writer task: first fragment (512 B, FIN=0) then a continuation frame
+        // (1024 B, FIN=0) which pushes the total to 1536 B > 1024 B cap.
+        let writer = tokio::spawn(async move {
+            let first = vec![0xAAu8; 512];
+            write_frame_masked(&mut client, Opcode::Binary, &first, false, [1, 2, 3, 4])
+                .await
+                .expect("write first fragment");
+            let cont = vec![0xBBu8; 1024];
+            let _ = write_frame_masked(
+                &mut client,
+                Opcode::Continuation,
+                &cont,
+                false,
+                [5, 6, 7, 8],
+            )
+            .await;
+            // Keep the pipe open briefly so the reader observes both frames.
+            let _ = client.flush().await;
+        });
+
+        let err = ws
+            .recv()
+            .await
+            .expect_err("oversized reassembly must error");
+        match err {
+            OxiHttpError::Body(msg) => {
+                assert!(
+                    msg.contains("exceeds maximum"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            other => panic!("expected OxiHttpError::Body, got {other:?}"),
+        }
+
+        // After the overflow the connection is marked closed.
+        assert!(ws.recv().await.expect("closed recv").is_none());
+        writer.await.expect("writer task");
+    }
+
+    /// A fragmented message that stays within the cap is reassembled normally.
+    #[tokio::test]
+    async fn in_limit_reassembly_succeeds() {
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut ws = WebSocket::new(server);
+        ws.set_max_message_size(1024);
+
+        let writer = tokio::spawn(async move {
+            let first = vec![0x01u8; 400];
+            write_frame_masked(&mut client, Opcode::Binary, &first, false, [1, 2, 3, 4])
+                .await
+                .expect("write first fragment");
+            let cont = vec![0x02u8; 400];
+            write_frame_masked(&mut client, Opcode::Continuation, &cont, true, [5, 6, 7, 8])
+                .await
+                .expect("write final fragment");
+            let _ = client.flush().await;
+        });
+
+        let msg = ws.recv().await.expect("recv ok").expect("some message");
+        match msg {
+            Message::Binary(data) => assert_eq!(data.len(), 800),
+            other => panic!("expected Binary, got {other:?}"),
+        }
+        writer.await.expect("writer task");
+    }
+
+    /// Regression test: a single **unfragmented** data frame larger than
+    /// `max_message_size` must be rejected exactly like an over-budget
+    /// reassembled message — before this fix, `set_max_message_size` only
+    /// bounded the fragmented-reassembly path, so a peer could send one
+    /// large unfragmented frame (up to the 64 MiB wire-level ceiling) and
+    /// bypass the configured budget entirely.
+    ///
+    /// With `max_message_size` at or above the `MIN_FRAME_PAYLOAD_CAP`
+    /// floor (as here), the wire-level `read_frame` cap and
+    /// `check_size_limit` enforce the *same* threshold, so the rejection
+    /// happens at the `read_frame` layer (cheaper: it never even allocates
+    /// a buffer for the oversized payload). Either layer catching it is a
+    /// correct outcome; see
+    /// `unfragmented_frame_between_max_message_size_and_frame_floor_is_rejected`
+    /// below for a case that specifically exercises `check_size_limit`.
+    #[tokio::test]
+    async fn oversized_unfragmented_frame_is_rejected() {
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut ws = WebSocket::new(server);
+        ws.set_max_message_size(1024);
+
+        let writer = tokio::spawn(async move {
+            // A single FIN=1 Binary frame of 2048 bytes — no fragmentation
+            // at all — well over the 1024-byte configured cap.
+            let payload = vec![0xCCu8; 2048];
+            let _ =
+                write_frame_masked(&mut client, Opcode::Binary, &payload, true, [9, 9, 9, 9]).await;
+            let _ = client.flush().await;
+        });
+
+        let err = ws
+            .recv()
+            .await
+            .expect_err("oversized unfragmented frame must error");
+        match err {
+            OxiHttpError::Body(msg) => {
+                assert!(
+                    msg.contains("too large") || msg.contains("exceeds maximum"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            other => panic!("expected OxiHttpError::Body, got {other:?}"),
+        }
+        assert!(ws.recv().await.expect("closed recv").is_none());
+        writer.await.expect("writer task");
+    }
+
+    /// Regression test specifically for the `check_size_limit` layer (as
+    /// opposed to the `read_frame`-level wire cap, which floors at
+    /// [`MIN_FRAME_PAYLOAD_CAP`] to keep control frames deliverable): with a
+    /// `max_message_size` below that floor, a data frame whose payload fits
+    /// under the floor but still exceeds `max_message_size` must still be
+    /// rejected — the floor only protects legal-sized control frames, it
+    /// must not silently raise the effective data-frame budget.
+    #[tokio::test]
+    async fn unfragmented_frame_between_max_message_size_and_frame_floor_is_rejected() {
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut ws = WebSocket::new(server);
+        ws.set_max_message_size(16); // well under MIN_FRAME_PAYLOAD_CAP (125)
+
+        let writer = tokio::spawn(async move {
+            // 100 bytes: passes the floored 125-byte read_frame cap, but
+            // must still be rejected by max_message_size=16.
+            let payload = vec![0xEEu8; 100];
+            let _ =
+                write_frame_masked(&mut client, Opcode::Binary, &payload, true, [3, 1, 4, 1]).await;
+            let _ = client.flush().await;
+        });
+
+        let err = ws
+            .recv()
+            .await
+            .expect_err("frame between max_message_size and the frame floor must be rejected");
+        match err {
+            OxiHttpError::Body(msg) => {
+                assert!(
+                    msg.contains("exceeds maximum"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            other => panic!("expected OxiHttpError::Body, got {other:?}"),
+        }
+        writer.await.expect("writer task");
+    }
+
+    /// A single unfragmented frame that stays within `max_message_size`
+    /// still succeeds (regression guard against an over-eager cap).
+    #[tokio::test]
+    async fn in_limit_unfragmented_frame_succeeds() {
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut ws = WebSocket::new(server);
+        ws.set_max_message_size(1024);
+
+        let writer = tokio::spawn(async move {
+            let payload = vec![0x07u8; 900];
+            write_frame_masked(&mut client, Opcode::Binary, &payload, true, [1, 1, 1, 1])
+                .await
+                .expect("write frame");
+            let _ = client.flush().await;
+        });
+
+        let msg = ws.recv().await.expect("recv ok").expect("some message");
+        match msg {
+            Message::Binary(data) => assert_eq!(data.len(), 900),
+            other => panic!("expected Binary, got {other:?}"),
+        }
+        writer.await.expect("writer task");
+    }
+
+    /// Regression test for the RFC 6455 §5.1 conformance gap: the server
+    /// must reject an unmasked frame from the client rather than silently
+    /// accepting it, and the connection must be marked closed afterward so
+    /// a caller that ignores the error cannot keep reading from a peer that
+    /// just violated the protocol.
+    #[tokio::test]
+    async fn unmasked_client_frame_is_rejected_and_closes_connection() {
+        use crate::ws_frame::write_frame;
+
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut ws = WebSocket::new(server);
+
+        let writer = tokio::spawn(async move {
+            // `write_frame` (not `write_frame_masked`) never sets the mask
+            // bit — exactly what an RFC-violating client would send.
+            let _ = write_frame(&mut client, Opcode::Text, b"hello", true).await;
+            let _ = client.flush().await;
+        });
+
+        let err = ws
+            .recv()
+            .await
+            .expect_err("unmasked frame must be rejected");
+        match err {
+            OxiHttpError::Body(msg) => {
+                assert!(msg.contains("unmasked"), "unexpected error message: {msg}");
+            }
+            other => panic!("expected OxiHttpError::Body, got {other:?}"),
+        }
+        // The connection must be closed, not merely have returned one error.
+        assert!(ws.recv().await.expect("closed recv").is_none());
+        writer.await.expect("writer task");
+    }
+
+    /// A Ping with a payload between `max_message_size` and 125 bytes must
+    /// still be delivered (and auto-Pong'd) even when the operator has
+    /// configured a very small message-size budget — control frames are not
+    /// subject to `max_message_size`, only to their own RFC-mandated
+    /// 125-byte ceiling.
+    #[tokio::test]
+    async fn ping_within_125_bytes_survives_tiny_max_message_size() {
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut ws = WebSocket::new(server);
+        // Far below 125: without the frame-cap floor this would make even a
+        // legal control frame's payload unreadable.
+        ws.set_max_message_size(16);
+
+        // Written directly (not from a spawned task) and `client` kept alive
+        // for the whole test: `recv()` triggers an auto-Pong write-back on
+        // the server side, which needs a live peer to write to. The 100-byte
+        // write fits comfortably in the 64 KiB duplex buffer without a
+        // concurrent reader.
+        let payload = vec![0x5Au8; 100];
+        write_frame_masked(&mut client, Opcode::Ping, &payload, true, [2, 4, 6, 8])
+            .await
+            .expect("write ping");
+        client.flush().await.expect("flush");
+
+        let msg = ws.recv().await.expect("recv ok").expect("some message");
+        match msg {
+            Message::Ping(data) => assert_eq!(data.len(), 100),
+            other => panic!("expected Ping, got {other:?}"),
+        }
+        drop(client);
+    }
 }

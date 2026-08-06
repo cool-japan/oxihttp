@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use oxihttp_core::OxiHttpError;
 
+use crate::middleware::BodyLimitConfig;
+
 /// Type alias for the state injection function stored in `Router`.
 ///
 /// The closure receives mutable access to `http::Extensions` and inserts the
@@ -97,14 +99,29 @@ impl Request {
     }
 
     /// Consume the body and return raw bytes.
+    ///
+    /// When a [`BodyLimitConfig`] has been attached to the request extensions
+    /// (done by the server's middleware pipeline when a body limit is
+    /// configured), the body is streamed frame-by-frame and rejected as soon as
+    /// the *decoded* size would exceed the limit. This enforces the cap on
+    /// chunked / `Transfer-Encoding` bodies that carry no `Content-Length`
+    /// header and would otherwise bypass the pre-handler check.
     pub async fn body_bytes(self) -> Result<Bytes, OxiHttpError> {
         use http_body_util::BodyExt;
-        self.inner
-            .into_body()
-            .collect()
-            .await
-            .map(|c| c.to_bytes())
-            .map_err(|e| OxiHttpError::Body(e.to_string()))
+        let limit = self
+            .inner
+            .extensions()
+            .get::<BodyLimitConfig>()
+            .map(|c| c.max_bytes);
+        let body = self.inner.into_body();
+        match limit {
+            Some(max) => collect_body_limited(body, max).await,
+            None => body
+                .collect()
+                .await
+                .map(|c| c.to_bytes())
+                .map_err(|e| OxiHttpError::Body(e.to_string())),
+        }
     }
 
     /// Consume the body and return it as a UTF-8 string.
@@ -726,6 +743,42 @@ impl Router {
     }
 }
 
+/// Collect an HTTP body into `Bytes`, rejecting it as soon as the accumulated
+/// decoded size would exceed `max` bytes.
+///
+/// Unlike a plain `Body::collect()`, this streams the body frame-by-frame and
+/// bails out early, so a chunked / streaming body that lies about (or omits)
+/// its `Content-Length` cannot force the server to buffer an unbounded amount
+/// of memory.
+async fn collect_body_limited<B>(mut body: B, max: u64) -> Result<Bytes, OxiHttpError>
+where
+    B: hyper::body::Body + Unpin,
+    B::Error: std::fmt::Display,
+{
+    use bytes::Buf;
+    use http_body_util::BodyExt;
+
+    let mut collected: Vec<u8> = Vec::new();
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|e| OxiHttpError::Body(e.to_string()))?;
+        if let Ok(mut data) = frame.into_data() {
+            let incoming = data.remaining() as u64;
+            if collected.len() as u64 + incoming > max {
+                return Err(OxiHttpError::Body(format!(
+                    "request body too large: exceeds limit of {max} bytes"
+                )));
+            }
+            while data.has_remaining() {
+                let chunk = data.chunk();
+                collected.extend_from_slice(chunk);
+                let consumed = chunk.len();
+                data.advance(consumed);
+            }
+        }
+    }
+    Ok(Bytes::from(collected))
+}
+
 /// Parse a route pattern string into segments.
 fn parse_pattern(pattern: &str) -> Vec<Segment> {
     pattern
@@ -786,6 +839,62 @@ fn match_pattern(segments: &[Segment], path: &str) -> Option<HashMap<String, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::task::{Context, Poll};
+
+    // ---- Body limit (chunked) tests ------------------------------------------
+
+    /// A minimal streaming body that emits a fixed sequence of data frames and
+    /// reports no `Content-Length` — i.e. it behaves like a chunked body.
+    struct ChunkedTestBody {
+        chunks: std::collections::VecDeque<Bytes>,
+    }
+
+    impl hyper::body::Body for ChunkedTestBody {
+        type Data = Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+            let this = self.get_mut();
+            match this.chunks.pop_front() {
+                Some(b) => Poll::Ready(Some(Ok(hyper::body::Frame::data(b)))),
+                None => Poll::Ready(None),
+            }
+        }
+    }
+
+    /// A chunked body whose total decoded size exceeds the limit must be
+    /// rejected even though no single frame and no `Content-Length` declares the
+    /// oversize.
+    #[tokio::test]
+    async fn chunked_body_over_limit_is_rejected() {
+        // 4 frames × 300 B = 1200 B, limit 1000 B.
+        let chunks = (0..4).map(|_| Bytes::from(vec![0u8; 300])).collect();
+        let body = ChunkedTestBody { chunks };
+        let err = collect_body_limited(body, 1000)
+            .await
+            .expect_err("oversized chunked body must be rejected");
+        match err {
+            OxiHttpError::Body(msg) => {
+                assert!(msg.contains("too large"), "unexpected error message: {msg}")
+            }
+            other => panic!("expected OxiHttpError::Body, got {other:?}"),
+        }
+    }
+
+    /// A chunked body within the limit is collected in full.
+    #[tokio::test]
+    async fn chunked_body_within_limit_is_accepted() {
+        let chunks = (0..3).map(|_| Bytes::from(vec![7u8; 200])).collect();
+        let body = ChunkedTestBody { chunks };
+        let bytes = collect_body_limited(body, 1000)
+            .await
+            .expect("body within limit must be accepted");
+        assert_eq!(bytes.len(), 600);
+        assert!(bytes.iter().all(|&b| b == 7));
+    }
 
     // ---- negotiate_from_headers tests ----------------------------------------
 

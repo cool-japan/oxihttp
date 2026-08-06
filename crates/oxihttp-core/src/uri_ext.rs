@@ -3,6 +3,19 @@
 use http::Uri;
 
 /// Extension trait providing convenience methods for `http::Uri`.
+///
+/// # Example
+///
+/// ```rust
+/// use http::Uri;
+/// use oxihttp_core::UriExt;
+///
+/// let uri: Uri = "https://example.com:8443/path?q=1".parse().expect("valid uri");
+/// assert_eq!(uri.host_str(), Some("example.com"));
+/// assert_eq!(uri.port_or_default(), Some(8443));
+/// assert!(uri.is_https());
+/// assert_eq!(uri.origin(), Some("https://example.com:8443".to_string()));
+/// ```
 pub trait UriExt {
     /// Extract the host from the URI.
     fn host_str(&self) -> Option<&str>;

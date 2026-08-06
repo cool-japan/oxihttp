@@ -30,13 +30,17 @@ rustls           = { workspace = true, optional = true }
 rustls-pki-types = { workspace = true, optional = true }
 # Decompression support (optional)
 oxiarc-deflate   = { workspace = true, optional = true }
+# CRC-32 verification for the bounded gzip decompression path (optional,
+# pulled in only with `decompression`; already a transitive dependency of
+# oxiarc-deflate, declared directly here so it can be named from source)
+oxiarc-core      = { workspace = true, optional = true }
 # HTTP/3 support (optional)
 oxiquic-h3       = { workspace = true, optional = true }
 
 [features]
 default = []
 tls = ["dep:oxitls", "dep:tokio-rustls", "dep:rustls", "dep:rustls-pki-types"]
-decompression = ["dep:oxiarc-deflate"]
+decompression = ["dep:oxiarc-deflate", "dep:oxiarc-core"]
 socks = []
 h3 = ["dep:oxiquic-h3", "dep:rustls"]
 

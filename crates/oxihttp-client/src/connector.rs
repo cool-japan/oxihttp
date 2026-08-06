@@ -164,6 +164,10 @@ where
     H: Service<Uri> + Clone + Send + Sync + 'static,
     H::Response: rt::Read + rt::Write + Connection + Send + Unpin + 'static,
     H::Future: Send + 'static,
+    // Required by `hyper-util`'s `Connect` convention so `OxiHttpsConnector`
+    // can wrap any caller-supplied inner connector; see the "BoxError bounds
+    // policy" section in `oxihttp_core::error`. Converted to `OxiHttpError`
+    // immediately below, never propagated as-is.
     H::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     type Response = MaybeHttpsStream<H::Response>;

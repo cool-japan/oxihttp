@@ -127,6 +127,28 @@ impl Cookie {
 
     /// Parse a cookie from a `Set-Cookie` header value (RFC 6265).
     /// `expires_at` is left as `None` here; it is computed at insertion time by `CookieJar`.
+    ///
+    /// Returns `None` (never panics) when the header does not even contain a
+    /// `name=value` pair; unrecognised attributes are silently ignored so a
+    /// server sending extension attributes this crate does not know about
+    /// still yields a usable cookie.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use oxihttp_core::Cookie;
+    ///
+    /// let cookie = Cookie::parse_set_cookie("session=abc123; Path=/; HttpOnly; Secure")
+    ///     .expect("valid Set-Cookie value");
+    /// assert_eq!(cookie.name(), "session");
+    /// assert_eq!(cookie.value(), "abc123");
+    /// assert_eq!(cookie.path(), Some("/"));
+    /// assert!(cookie.is_http_only());
+    /// assert!(cookie.is_secure());
+    ///
+    /// // Malformed input (no `=`) is rejected rather than panicking.
+    /// assert!(Cookie::parse_set_cookie("not-a-cookie").is_none());
+    /// ```
     pub fn parse_set_cookie(header: &str) -> Option<Self> {
         let mut parts = header.split(';');
         let first = parts.next()?.trim();
@@ -252,6 +274,19 @@ fn path_match(cookie_path: &str, request_path: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// A jar for collecting and managing cookies across requests and responses.
+///
+/// # Example
+///
+/// ```rust
+/// use oxihttp_core::CookieJar;
+///
+/// let mut jar = CookieJar::new();
+/// jar.add_from_set_cookie_headers(["session=abc123; Path=/", "theme=dark"]);
+///
+/// assert_eq!(jar.len(), 2);
+/// assert_eq!(jar.get("session").map(|c| c.value()), Some("abc123"));
+/// assert_eq!(jar.to_cookie_header(), "session=abc123; theme=dark");
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct CookieJar {
     pub cookies: Vec<Cookie>,
@@ -655,6 +690,46 @@ mod tests {
                 .unwrap_or_else(|| panic!("failed to parse round-trip for {name}={value}"));
             assert_eq!(parsed.name, name, "name mismatch for {name}");
             assert_eq!(parsed.value, value, "value mismatch for {name}={value}");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Adversarial fuzz: parse_set_cookie must never panic on untrusted input
+    // -------------------------------------------------------------------------
+    //
+    // Unlike `prop_cookie_round_trip` above (which only feeds strings this
+    // crate itself produced), these tests feed fully arbitrary strings — the
+    // kind a hostile origin server could send in a real `Set-Cookie` header —
+    // and assert only that `parse_set_cookie` returns (`Some` or `None`)
+    // without panicking.
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 512,
+            max_shrink_iters: 32,
+            ..ProptestConfig::default()
+        })]
+
+        /// Any arbitrary UTF-8 string must not panic `parse_set_cookie`.
+        #[test]
+        fn fuzz_parse_set_cookie_never_panics(header in ".*") {
+            // The outcome is intentionally unchecked; reaching this line
+            // without panicking is the assertion itself.
+            let _ = Cookie::parse_set_cookie(&header);
+        }
+
+        /// Same property restricted to inputs containing the delimiters the
+        /// parser actually branches on (`;`, `=`), which exercises the
+        /// attribute-splitting logic far more often than fully random text.
+        #[test]
+        fn fuzz_parse_set_cookie_never_panics_structured(
+            parts in prop::collection::vec(
+                prop::string::string_regex("[a-zA-Z0-9=; \t\"-]{0,16}").expect("valid regex"),
+                0..8,
+            )
+        ) {
+            let header = parts.join(";");
+            let _ = Cookie::parse_set_cookie(&header);
         }
     }
 }

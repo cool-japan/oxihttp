@@ -23,7 +23,10 @@ serde_json     = { workspace = true }
 # Server feature optional deps
 oxiarc-deflate   = { workspace = true, optional = true }
 futures-util     = { workspace = true, optional = true }
-sha2             = { workspace = true, optional = true }
+# Backs `static_files::FileRangeStream` (streamed, bounded-memory file
+# bodies — including byte-range requests — instead of reading whole files
+# into memory).
+futures-core     = { workspace = true, optional = true }
 mime_guess       = { workspace = true, optional = true }
 # TLS optional deps
 oxitls           = { workspace = true, optional = true }
@@ -45,9 +48,10 @@ oxiquic-h3     = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion      = { workspace = true }
-tokio          = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
+tokio          = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util"] }
 hyper          = { workspace = true, features = ["http1", "client"] }
 http-body-util = { workspace = true }
+proptest       = { workspace = true }
 
 [[bench]]
 name = "server_bench"
@@ -60,7 +64,12 @@ harness = false
 [features]
 default = []
 compression  = ["dep:oxiarc-deflate", "dep:futures-util"]
-static-files = ["dep:sha2", "dep:mime_guess"]
+# `tokio/fs` is required by `static_files.rs` (`tokio::fs::File` /
+# `tokio::fs::metadata`) but is not part of the workspace-wide tokio feature
+# set — without it this feature previously failed to build in isolation
+# (masked only when some other enabled feature happened to pull tokio's
+# `fs` feature in transitively, e.g. via `--all-features`).
+static-files = ["dep:mime_guess", "dep:futures-core", "tokio/fs"]
 sse          = ["dep:futures-util"]
 tls          = ["dep:oxitls", "dep:tokio-rustls", "dep:rustls", "dep:rustls-pki-types", "dep:rustls-pemfile"]
 tower        = ["dep:tower", "dep:tower-service", "dep:tower-layer"]

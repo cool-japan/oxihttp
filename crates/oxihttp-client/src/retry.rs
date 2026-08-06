@@ -4,6 +4,32 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 /// Configuration for automatic request retries.
+///
+/// Applied by [`ClientBuilder::retry_policy`][crate::ClientBuilder::retry_policy]
+/// to retry idempotent requests on retryable status codes or
+/// transport-level failures, with exponential backoff capped at
+/// `backoff_max`.
+///
+/// # Example
+///
+/// ```rust
+/// use std::time::Duration;
+/// use oxihttp_client::RetryPolicy;
+///
+/// let policy = RetryPolicy::new(4)
+///     .with_backoff_base(Duration::from_millis(50))
+///     .with_backoff_max(Duration::from_secs(2))
+///     .add_retryable_status(418); // treat 418 as retryable too
+///
+/// assert!(policy.should_retry_status(503)); // built-in default
+/// assert!(policy.should_retry_status(418)); // custom addition
+/// assert!(!policy.should_retry_status(404)); // never retried
+///
+/// // Exponential backoff, capped.
+/// assert_eq!(policy.backoff_delay(0), Duration::from_millis(50));
+/// assert_eq!(policy.backoff_delay(1), Duration::from_millis(100));
+/// assert_eq!(policy.backoff_delay(10), Duration::from_secs(2)); // hit the cap
+/// ```
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
     /// Maximum number of retry attempts.

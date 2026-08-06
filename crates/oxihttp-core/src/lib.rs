@@ -40,7 +40,7 @@ pub use header_ext::HeaderMapExt;
 pub use header_types::{
     Authorization, CacheControl, ContentLength, ETag, Header, Host, Location, Referer,
 };
-pub use multipart::{MultipartBuilder, Part as MultipartPart};
+pub use multipart::{MultipartBuilder, Part as MultipartPart, StreamingMultipart};
 pub use request_builder::RequestBuilder as CoreRequestBuilder;
 pub use response_ext::ResponseExt;
 pub use uri_ext::UriExt;

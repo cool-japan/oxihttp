@@ -1,6 +1,20 @@
 //! Redirect handling policies for the HTTP client.
 
 /// Policy controlling how the client handles HTTP redirects.
+///
+/// # Example
+///
+/// ```rust
+/// use oxihttp_client::RedirectPolicy;
+///
+/// let policy = RedirectPolicy::Limited(3);
+/// assert_eq!(policy.max_redirects(), Some(3));
+/// assert!(!policy.is_none());
+///
+/// assert_eq!(RedirectPolicy::None.max_redirects(), Some(0));
+/// assert_eq!(RedirectPolicy::All.max_redirects(), None); // unlimited
+/// assert_eq!(RedirectPolicy::default().max_redirects(), Some(10));
+/// ```
 #[derive(Debug, Clone)]
 pub enum RedirectPolicy {
     /// Never follow redirects. The redirect response is returned as-is.

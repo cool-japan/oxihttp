@@ -627,7 +627,7 @@ async fn accept_loop(
 ) {
     loop {
         let accept_result = listener.accept().await;
-        let (stream, _remote_addr) = match accept_result {
+        let (stream, remote_addr) = match accept_result {
             Ok(conn) => conn,
             Err(_) => continue,
         };
@@ -685,7 +685,7 @@ async fn accept_loop(
                         let pi = peer_info.clone();
                         async move {
                             req.extensions_mut().insert(pi);
-                            dispatch_with_middleware(router, middleware, req).await
+                            dispatch_with_middleware(router, middleware, req, remote_addr).await
                         }
                     });
                     let mut builder = auto::Builder::new(TokioExecutor::new());
@@ -708,7 +708,7 @@ async fn accept_loop(
             let svc = service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                 let router = Arc::clone(&router);
                 let middleware = Arc::clone(&middleware);
-                async move { dispatch_with_middleware(router, middleware, req).await }
+                async move { dispatch_with_middleware(router, middleware, req, remote_addr).await }
             });
             let io = hyper_util::rt::TokioIo::new(stream);
             let _ = builder.serve_connection_with_upgrades(io, svc).await;
@@ -741,7 +741,7 @@ async fn accept_loop(
 
     loop {
         let accept_result = listener.accept().await;
-        let (stream, _remote_addr) = match accept_result {
+        let (stream, remote_addr) = match accept_result {
             Ok(conn) => conn,
             Err(_) => continue,
         };
@@ -811,9 +811,13 @@ async fn accept_loop(
                                 req.extensions_mut().insert(peer_info);
 
                                 // Pre-handler middleware (CORS, rate limit, body limit)
-                                if let Some(result) = middleware.pre_handle(&req).await {
+                                if let Some(result) = middleware.pre_handle(&req, remote_addr).await
+                                {
                                     return result.map_err(|e| OxiHttpError::Server(e.to_string()));
                                 }
+                                // Carry the body limit to the body reader so
+                                // chunked bodies (no Content-Length) are capped.
+                                middleware.inject_body_limit(&mut req);
 
                                 let origin = req
                                     .headers()
@@ -860,16 +864,19 @@ async fn accept_loop(
                 return;
             }
 
-            let svc = service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+            let svc = service_fn(move |mut req: hyper::Request<hyper::body::Incoming>| {
                 let middleware = Arc::clone(&middleware);
                 // Clone the service again so the closure is `FnMut` (hyper
                 // may call it multiple times for keep-alive connections).
                 let mut svc = conn_svc.clone();
                 async move {
                     // Pre-handler middleware (CORS, rate limit, body limit)
-                    if let Some(result) = middleware.pre_handle(&req).await {
+                    if let Some(result) = middleware.pre_handle(&req, remote_addr).await {
                         return result.map_err(|e| OxiHttpError::Server(e.to_string()));
                     }
+                    // Carry the body limit to the body reader so chunked bodies
+                    // (no Content-Length) are capped on decoded bytes.
+                    middleware.inject_body_limit(&mut req);
 
                     let origin = req
                         .headers()
@@ -921,12 +928,16 @@ async fn accept_loop(
 async fn dispatch_with_middleware(
     router: Arc<Router>,
     middleware: Arc<MiddlewarePipeline>,
-    req: hyper::Request<hyper::body::Incoming>,
+    mut req: hyper::Request<hyper::body::Incoming>,
+    remote_addr: SocketAddr,
 ) -> Result<hyper::Response<Full<Bytes>>, OxiHttpError> {
     // Pre-handler middleware
-    if let Some(result) = middleware.pre_handle(&req).await {
+    if let Some(result) = middleware.pre_handle(&req, remote_addr).await {
         return result.map_err(|e| OxiHttpError::Server(e.to_string()));
     }
+    // Carry the body limit to the body reader so chunked bodies (no
+    // Content-Length) are capped on decoded bytes.
+    middleware.inject_body_limit(&mut req);
 
     let origin = req
         .headers()

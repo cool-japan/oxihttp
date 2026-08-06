@@ -135,10 +135,33 @@ transport layer. Requires a valid TLS configuration (QUIC mandates TLS 1.3).
 See the rustdoc for `oxihttp::migration` — a mapping of common reqwest patterns to their
 OxiHTTP equivalents.
 
+## MSRV
+
+The default feature set (`client` + `server`, no `tls`/`h3`/`compression`/`decompression`)
+requires **Rust 1.80+** (`rust-version` in the workspace `Cargo.toml`). Optional features that
+pull in a sibling COOLJAPAN crate raise the effective floor for that feature only:
+
+| Feature | Effective MSRV | Why |
+|---------|----------------|-----|
+| `tls` | 1.89 | `oxitls`/`oxitls-core`'s declared `rust-version` |
+| `h3` | 1.85 | `oxiquic-h3`/`oxiquic-crypto`'s declared `rust-version` (raised from 1.80 as of `oxiquic` 0.2.1) |
+| `compression` / `decompression` | 1.85 | `oxiarc-deflate`/`oxiarc-core`'s declared `rust-version` |
+
+Verified 2026-08-07 against the actual dependency tree resolved by
+`cargo tree --features <feature>` and each sibling crate's manifest as published to
+crates.io at the version pinned in this crate's own `Cargo.toml` — not merely a sibling
+repo's current in-progress checkout, which can be ahead of what it last published.
+`cargo`'s dependency resolver enforces each floor automatically: building with one of
+these features on a toolchain below its floor fails at `cargo build`/`cargo check` time
+with an explicit `rust-version` resolver error — it does not silently miscompile.
+Re-verify this table whenever `oxitls`, `oxiquic-h3`/`oxiquic-crypto`, or
+`oxiarc-deflate`/`oxiarc-core` are bumped in `Cargo.toml`.
+
 ## Status
 
-**v0.2.0** — production-ready for HTTP/1.1, HTTPS, and HTTP/2 workloads.
-All milestones M0–M5 complete (355 tests, 0 failures). Released 2026-06-22.
+**v0.2.1** — production-ready for HTTP/1.1, HTTPS, and HTTP/2 workloads.
+All milestones M0–M5 complete: 320 tests with default features, 446 with `--all-features`
+(plus 56 doctests), 0 failures (`cargo nextest run` / `cargo test --doc`, 2026-08-07).
 Security: clears L1 PENDING-REPUBLISH — oxitls 0.2.0 uses pure Mozilla root store exclusively.
 
 | Milestone | Status |

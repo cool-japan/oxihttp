@@ -438,6 +438,72 @@ async fn test_rate_limiting_returns_429() {
     );
 }
 
+/// Regression test for the spoofable-`X-Forwarded-For` rate-limit bypass.
+///
+/// Before the fix, the rate limiter keyed its bucket solely on the
+/// client-controlled `X-Forwarded-For` header. An attacker could therefore
+/// send a different (fabricated) value on every request and get a fresh
+/// token bucket each time, completely bypassing the limit. With the fix,
+/// `X-Forwarded-For` is ignored by default (no trusted-proxy configuration),
+/// so two requests from the same TCP peer share one bucket *regardless* of
+/// how many different XFF values they claim.
+#[tokio::test]
+async fn test_rate_limiting_ignores_spoofed_x_forwarded_for_by_default() {
+    let rate_limiter = oxihttp_server::RateLimiter::new(1, 0.001_f64);
+
+    let router = oxihttp_server::Router::new().get("/limited", |_req| async {
+        oxihttp_server::response::text_response("ok")
+    });
+
+    let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let (addr, _handle) = oxihttp_server::Server::bind("127.0.0.1:0")
+        .with_rate_limiter(rate_limiter)
+        .with_graceful_shutdown(async move {
+            let _ = rx.await;
+        })
+        .serve_with_addr(router)
+        .await
+        .expect("server start");
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let client = oxihttp_client::Client::builder()
+        .redirect_policy(oxihttp_client::RedirectPolicy::None)
+        .build()
+        .expect("client build");
+    let url = format!("http://{addr}/limited");
+
+    // First request claims to be forwarded from 1.1.1.1 and consumes the
+    // single token.
+    let resp1 = client
+        .get(&url)
+        .expect("builder")
+        .header("x-forwarded-for", "1.1.1.1")
+        .expect("header")
+        .send()
+        .await
+        .expect("first request");
+    assert_eq!(resp1.status(), http::StatusCode::OK);
+
+    // Second request — same TCP peer (127.0.0.1), but a *different* claimed
+    // X-Forwarded-For. Under the old key-on-XFF behavior this would land in
+    // a brand-new bucket and succeed, bypassing the limit entirely. It must
+    // now be rejected because both requests share the same peer-IP bucket.
+    let resp2 = client
+        .get(&url)
+        .expect("builder")
+        .header("x-forwarded-for", "2.2.2.2")
+        .expect("header")
+        .send()
+        .await
+        .expect("second request");
+    assert_eq!(
+        resp2.status(),
+        http::StatusCode::TOO_MANY_REQUESTS,
+        "rotating X-Forwarded-For must not bypass the rate limit"
+    );
+}
+
 #[tokio::test]
 async fn test_full_client_server_roundtrip() {
     // Set up a server with multiple endpoints

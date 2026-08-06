@@ -39,7 +39,8 @@ pub trait FromRequestParts: Sized {
 /// Extracts and decodes the header `H` from the request, returning an error
 /// if the header is missing or its value is invalid.
 ///
-/// # Example
+/// Inside a handler this is normally driven via
+/// [`Request::extract`][crate::Request::extract]:
 ///
 /// ```rust,no_run
 /// use oxihttp_server::extractor::TypedHeader;
@@ -47,6 +48,31 @@ pub trait FromRequestParts: Sized {
 ///
 /// // In a handler:
 /// // let TypedHeader(ct) = req.extract::<TypedHeader<ContentType>>()?;
+/// ```
+///
+/// The extraction logic itself — [`FromRequestParts::from_request_parts`] —
+/// can be exercised directly against a [`RequestParts`] value, which is how
+/// `Request::extract` implements the call above:
+///
+/// ```rust
+/// use std::collections::HashMap;
+/// use http::{HeaderMap, HeaderValue, Method, Uri};
+/// use oxihttp_core::ContentType;
+/// use oxihttp_server::extractor::{FromRequestParts, RequestParts, TypedHeader};
+///
+/// let method = Method::POST;
+/// let uri: Uri = "/upload".parse().expect("valid uri");
+/// let mut headers = HeaderMap::new();
+/// headers.insert(
+///     http::header::CONTENT_TYPE,
+///     HeaderValue::from_static("application/json"),
+/// );
+/// let path_params = HashMap::new();
+/// let parts = RequestParts { method: &method, uri: &uri, headers: &headers, path_params: &path_params };
+///
+/// let TypedHeader(ct) = TypedHeader::<ContentType>::from_request_parts(&parts)
+///     .expect("Content-Type is present and valid");
+/// assert_eq!(ct, ContentType::Json);
 /// ```
 pub struct TypedHeader<H: Header>(pub H);
 

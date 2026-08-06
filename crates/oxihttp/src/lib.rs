@@ -69,6 +69,7 @@ pub use oxihttp_core::{
     PinnedBody,
     SameSite,
     StatusCode,
+    StreamingMultipart,
     Uri,
     UriExt,
     Version,

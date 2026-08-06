@@ -9,6 +9,23 @@ use oxihttp_core::OxiHttpError;
 /// Build a JSON response from a serializable value.
 ///
 /// Sets the `Content-Type` header to `application/json`.
+///
+/// # Example
+///
+/// ```rust
+/// use oxihttp_server::response::json_response;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Health { status: &'static str }
+///
+/// let resp = json_response(&Health { status: "ok" }).expect("valid json");
+/// assert_eq!(resp.status(), http::StatusCode::OK);
+/// assert_eq!(
+///     resp.headers().get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()),
+///     Some("application/json")
+/// );
+/// ```
 pub fn json_response<T: serde::Serialize>(
     value: &T,
 ) -> Result<hyper::Response<Full<Bytes>>, OxiHttpError> {

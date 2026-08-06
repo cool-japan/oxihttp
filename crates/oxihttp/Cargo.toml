@@ -32,11 +32,15 @@ oxihttp-server = { workspace = true, optional = true }
 http           = { workspace = true }
 
 [dev-dependencies]
-tokio          = { workspace = true }
+# `fs` is additive on top of the workspace tokio feature set: used only by
+# test helpers (e.g. streaming a real temp file for the multipart
+# zero-copy-upload regression test), never by the published library code.
+tokio          = { workspace = true, features = ["fs"] }
 hyper          = { workspace = true }
 hyper-util     = { workspace = true }
 bytes          = { workspace = true }
 http-body-util = { workspace = true }
+serde          = { workspace = true }
 serde_json     = { workspace = true }
 oxihttp-client = { workspace = true, features = ["socks"] }
 oxihttp-server = { workspace = true, features = ["tls", "tower", "websocket"] }

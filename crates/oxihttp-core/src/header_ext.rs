@@ -6,6 +6,25 @@ use crate::content_type::ContentType;
 use crate::OxiHttpError;
 
 /// Extension trait providing typed accessors for common HTTP headers.
+///
+/// Implemented for `http::HeaderMap`; import the trait to call these methods
+/// directly on any `HeaderMap` value (request headers, response headers, or
+/// a freshly-built map).
+///
+/// # Example
+///
+/// ```rust
+/// use http::HeaderMap;
+/// use oxihttp_core::{ContentType, HeaderMapExt};
+///
+/// let mut headers = HeaderMap::new();
+/// headers.set_content_type(&ContentType::Json).expect("valid header value");
+/// headers.set_bearer_auth("secret-token").expect("valid header value");
+///
+/// assert_eq!(headers.content_type(), Some(ContentType::Json));
+/// assert_eq!(headers.authorization(), Some("Bearer secret-token"));
+/// assert_eq!(headers.host(), None);
+/// ```
 pub trait HeaderMapExt {
     /// Get the `Content-Type` header as a parsed `ContentType`.
     fn content_type(&self) -> Option<ContentType>;
